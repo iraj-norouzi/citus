@@ -268,6 +268,7 @@ static List * WorkerAggregateExpressionList(Aggref *originalAggregate,
 											WorkerAggregateWalkerContext *walkerContextry);
 static AggregateType GetAggregateType(Aggref *aggregatExpression);
 static Oid AggregateArgumentType(Aggref *aggregate);
+static Expr * FirstAggregateArgument(Aggref *aggregate);
 static bool AggregateEnabledCustom(Aggref *aggregateExpression);
 static Oid CitusFunctionOidWithSignature(char *functionName, int numargs, Oid *argtypes);
 static Oid WorkerPartialAggOid(void);
@@ -2012,6 +2013,12 @@ MasterAggregateExpression(Aggref *originalAggregate,
 		Oid aggregateFunctionId = AggregateFunctionOid(aggregateName, workerReturnType);
 		Oid masterReturnType = get_func_rettype(aggregateFunctionId);
 
+		Aggref *newMasterAggregate = copyObject(originalAggregate);
+		newMasterAggregate->aggdistinct = NULL;
+		newMasterAggregate->aggfnoid = aggregateFunctionId;
+		newMasterAggregate->aggtype = masterReturnType;
+		newMasterAggregate->aggfilter = NULL;
+
 		/*
 		 * If return type aggregate is anyelement, it's actual return type is
 		 * determined on the type of its argument. So we replace it with the
@@ -2019,13 +2026,11 @@ MasterAggregateExpression(Aggref *originalAggregate,
 		 */
 		if (masterReturnType == ANYELEMENTOID)
 		{
-			masterReturnType = workerReturnType;
+			newMasterAggregate->aggtype = workerReturnType;
+
+			Expr *firstArg = FirstAggregateArgument(originalAggregate);
+			newMasterAggregate->aggcollid = exprCollation((Node *) firstArg);
 		}
-		Aggref *newMasterAggregate = copyObject(originalAggregate);
-		newMasterAggregate->aggdistinct = NULL;
-		newMasterAggregate->aggfnoid = aggregateFunctionId;
-		newMasterAggregate->aggtype = masterReturnType;
-		newMasterAggregate->aggfilter = NULL;
 
 		Var *column = makeVar(masterTableId, walkerContext->columnId, workerReturnType,
 							  workerReturnTypeMod, workerCollationId, columnLevelsUp);
@@ -3183,6 +3188,22 @@ AggregateArgumentType(Aggref *aggregate)
 	Assert(list_length(argumentList) == 1);
 
 	return returnTypeId;
+}
+
+
+/*
+ * FirstAggregateArgument returns the first argument of the aggregate.
+ */
+static Expr *
+FirstAggregateArgument(Aggref *aggregate)
+{
+	List *argumentList = aggregate->args;
+
+	Assert(list_length(argumentList) >= 1);
+
+	TargetEntry *argument = (TargetEntry *) linitial(argumentList);
+
+	return argument->expr;
 }
 
 
