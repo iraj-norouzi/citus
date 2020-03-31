@@ -1,4 +1,6 @@
-### citus v9.2.4 (March 30, 2020) ###
+### citus v9.2.4 (March 31, 2020) ###
+
+* Fixes an error when using LEFT JOIN with GROUP BY on primary key
 
 * Fixes a release problem in 9.2.3
 
