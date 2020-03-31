@@ -1388,10 +1388,13 @@ DistPartitionKey(Oid relationId)
 	/* reference tables do not have partition column */
 	if (partitionEntry->partitionMethod == DISTRIBUTE_BY_NONE)
 	{
+		ReleaseCacheEntry(partitionEntry);
 		return NULL;
 	}
 
-	return copyObject(partitionEntry->partitionColumn);
+	Var *partitionColumn = copyObject(partitionEntry->partitionColumn);
+	ReleaseCacheEntry(partitionEntry);
+	return partitionColumn;
 }
 
 
@@ -1423,7 +1426,7 @@ PartitionMethod(Oid relationId)
 	CitusTableCacheEntry *partitionEntry = GetCitusTableCacheEntry(relationId);
 
 	char partitionMethod = partitionEntry->partitionMethod;
-
+	ReleaseCacheEntry(partitionEntry);
 	return partitionMethod;
 }
 
@@ -1436,6 +1439,6 @@ TableReplicationModel(Oid relationId)
 	CitusTableCacheEntry *partitionEntry = GetCitusTableCacheEntry(relationId);
 
 	char replicationModel = partitionEntry->replicationModel;
-
+	ReleaseCacheEntry(partitionEntry);
 	return replicationModel;
 }

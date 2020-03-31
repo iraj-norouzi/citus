@@ -132,7 +132,7 @@ master_get_table_metadata(PG_FUNCTION_ARGS)
 	{
 		/* get decompiled expression tree for partition key */
 		partitionKeyExpr =
-			PointerGetDatum(cstring_to_text(partitionEntry->partitionKeyString));
+			PointerGetDatum(cstring_to_text(partitionKeyString));
 		partitionKey = DirectFunctionCall2(pg_get_expr, partitionKeyExpr,
 										   ObjectIdGetDatum(relationId));
 	}
@@ -153,6 +153,7 @@ master_get_table_metadata(PG_FUNCTION_ARGS)
 	HeapTuple metadataTuple = heap_form_tuple(metadataDescriptor, values, isNulls);
 	Datum metadataDatum = HeapTupleGetDatum(metadataTuple);
 
+	ReleaseCacheEntry(partitionEntry);
 	PG_RETURN_DATUM(metadataDatum);
 }
 

@@ -189,6 +189,12 @@ static ScanKeyData DistPartitionScanKey[1];
 static ScanKeyData DistShardScanKey[1];
 static ScanKeyData DistObjectScanKey[3];
 
+#ifdef USE_ASSERT_CHECKING
+static bool CacheInUse = false;
+#define SET_CACHE_IN_USE(x) ((void) (CacheInUse = (x)))
+#else
+#define SET_CACHE_IN_USE(x) ((void) (x))
+#endif
 
 /* local function forward declarations */
 static bool IsCitusTableViaCatalog(Oid relationId);
@@ -270,6 +276,21 @@ EnsureModificationsCanRun(void)
 
 
 /*
+ * ReleaseCacheEntry releases a pointer loaned out by cache.
+ * This only asserts correctness, without asserts this is a nop.
+ * All pointers must be released when AcceptInvalidationMessages is called.
+ */
+void
+ReleaseCacheEntry(void *cacheEntry)
+{
+#ifdef USE_ASSERT_CHECKING
+	Assert(CacheInUse);
+	CacheInUse = false;
+#endif
+}
+
+
+/*
  * IsCitusTable returns whether relationId is a distributed relation or
  * not.
  */
@@ -287,7 +308,9 @@ IsCitusTable(Oid relationId)
 		return false;
 	}
 
-	return cacheEntry->isCitusTable;
+	bool isCitusTable = cacheEntry->isCitusTable;
+	ReleaseCacheEntry(cacheEntry);
+	return isCitusTable;
 }
 
 
@@ -724,7 +747,7 @@ LookupShardCacheEntry(int64 shardId)
 		Oid relationId = LookupShardRelation(shardId, false);
 
 		/* trigger building the cache for the shard id */
-		LookupCitusTableCacheEntry(relationId);
+		ReleaseCacheEntry(LookupCitusTableCacheEntry(relationId));
 
 		recheck = true;
 	}
@@ -734,6 +757,7 @@ LookupShardCacheEntry(int64 shardId)
 		 * We might have some concurrent metadata changes. In order to get the changes,
 		 * we first need to accept the cache invalidation messages.
 		 */
+		Assert(!CacheInUse);
 		AcceptInvalidationMessages();
 
 		if (!shardEntry->tableEntry->isValid)
@@ -747,8 +771,8 @@ LookupShardCacheEntry(int64 shardId)
 			 * reused. Reload the cache entries for both old and new relation
 			 * ID and then look up the shard entry again.
 			 */
-			LookupCitusTableCacheEntry(oldRelationId);
-			LookupCitusTableCacheEntry(currentRelationId);
+			ReleaseCacheEntry(LookupCitusTableCacheEntry(oldRelationId));
+			ReleaseCacheEntry(LookupCitusTableCacheEntry(currentRelationId));
 
 			recheck = true;
 		}
@@ -867,10 +891,12 @@ LookupCitusTableCacheEntry(Oid relationId)
 		 * We might have some concurrent metadata changes. In order to get the changes,
 		 * we first need to accept the cache invalidation messages.
 		 */
+		Assert(!CacheInUse);
 		AcceptInvalidationMessages();
 
 		if (cacheEntry->isValid)
 		{
+			SET_CACHE_IN_USE(true);
 			return cacheEntry;
 		}
 
@@ -898,6 +924,7 @@ LookupCitusTableCacheEntry(Oid relationId)
 
 	RESUME_INTERRUPTS();
 
+	SET_CACHE_IN_USE(true);
 	return cacheEntry;
 }
 
@@ -940,10 +967,12 @@ LookupDistObjectCacheEntry(Oid classid, Oid objid, int32 objsubid)
 		 * We might have some concurrent metadata changes. In order to get the changes,
 		 * we first need to accept the cache invalidation messages.
 		 */
+		Assert(!CacheInUse);
 		AcceptInvalidationMessages();
 
 		if (cacheEntry->isValid)
 		{
+			SET_CACHE_IN_USE(true);
 			return cacheEntry;
 		}
 
@@ -1000,6 +1029,7 @@ LookupDistObjectCacheEntry(Oid classid, Oid objid, int32 objsubid)
 	systable_endscan(pgDistObjectScan);
 	relation_close(pgDistObjectRel, AccessShareLock);
 
+	SET_CACHE_IN_USE(true);
 	return cacheEntry;
 }
 
@@ -2999,6 +3029,7 @@ PrepareWorkerNodeCache(void)
 	 * We might have some concurrent metadata changes. In order to get the changes,
 	 * we first need to accept the cache invalidation messages.
 	 */
+	Assert(!CacheInUse);
 	AcceptInvalidationMessages();
 
 	if (!workerNodeHashValid)
@@ -3382,6 +3413,8 @@ InvalidateForeignKeyGraph(void)
 static void
 InvalidateDistRelationCacheCallback(Datum argument, Oid relationId)
 {
+	Assert(!CacheInUse);
+
 	/* invalidate either entire cache or a specific entry */
 	if (relationId == InvalidOid)
 	{
