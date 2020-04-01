@@ -199,7 +199,7 @@ LockTruncatedRelationMetadataInWorkers(TruncateStmt *truncateStatement)
 															 referencingRelationId);
 		}
 
-		ReleaseCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheEntry);
 	}
 
 	if (distributedRelationList != NIL)

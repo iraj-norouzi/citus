@@ -91,7 +91,7 @@ upgrade_to_reference_table(PG_FUNCTION_ARGS)
 								  relationName)));
 	}
 
-	ReleaseCacheEntry(tableEntry);
+	ReleaseTableCacheEntry(tableEntry);
 	LockRelationOid(relationId, AccessExclusiveLock);
 
 	List *shardIntervalList = LoadShardIntervalList(relationId);
@@ -471,7 +471,7 @@ ReferenceTableOidList()
 			referenceTableList = lappend_oid(referenceTableList, relationId);
 		}
 
-		ReleaseCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheEntry);
 	}
 
 	return referenceTableList;

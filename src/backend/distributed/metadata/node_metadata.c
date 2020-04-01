@@ -842,7 +842,7 @@ get_shard_id_for_distribution_column(PG_FUNCTION_ARGS)
 
 		CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(relationId);
 		shardInterval = FindShardInterval(distributionValueDatum, cacheEntry);
-		ReleaseCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheEntry);
 	}
 	else
 	{

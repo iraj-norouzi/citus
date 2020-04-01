@@ -56,7 +56,7 @@ CallDistributedProcedureRemotely(CallStmt *callStmt, DestReceiver *dest)
 																 functionId, 0);
 	if (procedure == NULL || !procedure->isDistributed)
 	{
-		ReleaseCacheEntry(procedure);
+		ReleaseObjectCacheEntry(procedure);
 		return false;
 	}
 
@@ -154,7 +154,7 @@ CallFuncExprRemotely(CallStmt *callStmt, DistObjectCacheEntry *procedure,
 		return false;
 	}
 
-	ReleaseCacheEntry(procedure);
+	ReleaseObjectCacheEntry(procedure);
 
 	ereport(DEBUG1, (errmsg("pushing down the procedure")));
 

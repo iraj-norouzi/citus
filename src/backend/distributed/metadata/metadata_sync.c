@@ -231,7 +231,7 @@ ShouldSyncTableMetadata(Oid relationId)
 	bool mxTable = (streamingReplicated && hashDistributed);
 	bool referenceTable = (tableEntry->partitionMethod == DISTRIBUTE_BY_NONE);
 
-	ReleaseCacheEntry(tableEntry);
+	ReleaseTableCacheEntry(tableEntry);
 
 	if (mxTable || referenceTable)
 	{
@@ -487,7 +487,7 @@ GetDistributedTableDDLEvents(Oid relationId)
 	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(relationId);
 	char *metadataCommand = DistributionCreateCommand(cacheEntry);
 	commandList = lappend(commandList, metadataCommand);
-	ReleaseCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheEntry);
 
 	/* commands to create the truncate trigger of the table */
 	char *truncateTriggerCreateCommand = TruncateTriggerCreateCommand(relationId);

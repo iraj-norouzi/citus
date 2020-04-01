@@ -746,7 +746,7 @@ ModifyQuerySupported(Query *queryTree, Query *originalQuery, bool multiShardQuer
 				char *partitionKeyString = cacheEntry->partitionKeyString;
 				char *partitionColumnName = ColumnToColumnName(distributedTableId,
 															   partitionKeyString);
-				ReleaseCacheEntry(cacheEntry);
+				ReleaseTableCacheEntry(cacheEntry);
 
 				appendStringInfo(errorHint, "Consider using an equality filter on "
 											"partition column \"%s\" to target a single shard.",
@@ -1493,7 +1493,7 @@ RouterInsertTaskList(Query *query, bool parametersInQueryResolved,
 	List *modifyRouteList = BuildRoutesForInsert(query, planningError);
 	if (*planningError != NULL)
 	{
-		ReleaseCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheEntry);
 		return NIL;
 	}
 
@@ -1517,7 +1517,7 @@ RouterInsertTaskList(Query *query, bool parametersInQueryResolved,
 		insertTaskList = lappend(insertTaskList, modifyTask);
 	}
 
-	ReleaseCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheEntry);
 	return insertTaskList;
 }
 
@@ -1913,7 +1913,7 @@ SingleShardModifyTaskList(Query *query, uint64 jobId, List *relationShardList,
 	task->replicationModel = modificationTableCacheEntry->replicationModel;
 	task->parametersInQueryStringResolved = parametersInQueryResolved;
 
-	ReleaseCacheEntry(modificationTableCacheEntry);
+	ReleaseTableCacheEntry(modificationTableCacheEntry);
 	return list_make1(task);
 }
 
@@ -1965,10 +1965,10 @@ SelectsFromDistributedTable(List *rangeTableList, Query *query)
 			(resultRangeTableEntry == NULL || resultRangeTableEntry->relid !=
 			 rangeTableEntry->relid))
 		{
-			ReleaseCacheEntry(cacheEntry);
+			ReleaseTableCacheEntry(cacheEntry);
 			return true;
 		}
-		ReleaseCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheEntry);
 	}
 
 	return false;
@@ -2330,7 +2330,7 @@ TargetShardIntervalForFastPathQuery(Query *query, bool *isMultiShardQuery,
 		CitusTableCacheEntry *cache = GetCitusTableCacheEntry(relationId);
 		ShardInterval *shardInterval =
 			FindShardInterval(inputDistributionKeyValue->constvalue, cache);
-		ReleaseCacheEntry(cache);
+		ReleaseTableCacheEntry(cache);
 		if (shardInterval == NULL)
 		{
 			ereport(ERROR, (errmsg(
@@ -2422,7 +2422,7 @@ TargetShardIntervalsForRestrictInfo(RelationRestrictionContext *restrictionConte
 		List *joinInfoList = relationRestriction->relOptInfo->joininfo;
 		List *pseudoRestrictionList = extract_actual_clauses(joinInfoList, true);
 
-		ReleaseCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheEntry);
 		relationRestriction->prunedShardIntervalList = NIL;
 
 		/*
@@ -2617,7 +2617,7 @@ BuildRoutesForInsert(Query *query, DeferredErrorMessage **planningError)
 
 		modifyRouteList = lappend(modifyRouteList, modifyRoute);
 
-		ReleaseCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheEntry);
 		return modifyRouteList;
 	}
 
@@ -2718,7 +2718,7 @@ BuildRoutesForInsert(Query *query, DeferredErrorMessage **planningError)
 											 errorMessage->data, NULL,
 											 errorHint->data);
 
-			ReleaseCacheEntry(cacheEntry);
+			ReleaseTableCacheEntry(cacheEntry);
 			return NIL;
 		}
 
@@ -2726,7 +2726,7 @@ BuildRoutesForInsert(Query *query, DeferredErrorMessage **planningError)
 		insertValues->shardId = targetShard->shardId;
 	}
 
-	ReleaseCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheEntry);
 
 	modifyRouteList = GroupInsertValuesByShardId(insertValuesList);
 	return modifyRouteList;

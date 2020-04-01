@@ -695,7 +695,7 @@ CheckConflictingRelationAccesses(Oid relationId, ShardPlacementAccessType access
 	if (!(cacheEntry->partitionMethod == DISTRIBUTE_BY_NONE &&
 		  cacheEntry->referencingRelationsViaForeignKey != NIL))
 	{
-		ReleaseCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheEntry);
 		return;
 	}
 
@@ -792,7 +792,7 @@ CheckConflictingRelationAccesses(Oid relationId, ShardPlacementAccessType access
 		}
 	}
 
-	ReleaseCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheEntry);
 }
 
 
@@ -818,10 +818,10 @@ CheckConflictingParallelRelationAccesses(Oid relationId, ShardPlacementAccessTyp
 	if (!(cacheEntry->partitionMethod == DISTRIBUTE_BY_HASH &&
 		  cacheEntry->referencedRelationsViaForeignKey != NIL))
 	{
-		ReleaseCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheEntry);
 		return;
 	}
-	ReleaseCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheEntry);
 
 	if (MultiShardConnectionType == PARALLEL_CONNECTION &&
 		HoldsConflictingLockWithReferencedRelations(relationId, accessType,
@@ -909,7 +909,7 @@ HoldsConflictingLockWithReferencedRelations(Oid relationId, ShardPlacementAccess
 			*conflictingRelationId = referencedRelation;
 			*conflictingAccessMode = PLACEMENT_ACCESS_SELECT;
 
-			ReleaseCacheEntry(cacheEntry);
+			ReleaseTableCacheEntry(cacheEntry);
 			return true;
 		}
 
@@ -923,7 +923,7 @@ HoldsConflictingLockWithReferencedRelations(Oid relationId, ShardPlacementAccess
 			*conflictingRelationId = referencedRelation;
 			*conflictingAccessMode = PLACEMENT_ACCESS_DML;
 
-			ReleaseCacheEntry(cacheEntry);
+			ReleaseTableCacheEntry(cacheEntry);
 			return true;
 		}
 
@@ -933,12 +933,12 @@ HoldsConflictingLockWithReferencedRelations(Oid relationId, ShardPlacementAccess
 			*conflictingRelationId = referencedRelation;
 			*conflictingAccessMode = PLACEMENT_ACCESS_DDL;
 
-			ReleaseCacheEntry(cacheEntry);
+			ReleaseTableCacheEntry(cacheEntry);
 			return true;
 		}
 	}
 
-	ReleaseCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheEntry);
 	return false;
 }
 
@@ -1043,11 +1043,11 @@ HoldsConflictingLockWithReferencingRelations(Oid relationId, ShardPlacementAcces
 		{
 			*conflictingRelationId = referencingRelation;
 
-			ReleaseCacheEntry(cacheEntry);
+			ReleaseTableCacheEntry(cacheEntry);
 			return true;
 		}
 	}
 
-	ReleaseCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheEntry);
 	return false;
 }

@@ -223,7 +223,7 @@ TryToDelegateFunctionCall(DistributedPlanningContext *planContext)
 	if (procedure == NULL || !procedure->isDistributed)
 	{
 		/* not a distributed function call */
-		ReleaseCacheEntry(procedure);
+		ReleaseObjectCacheEntry(procedure);
 		return NULL;
 	}
 	else
@@ -239,7 +239,7 @@ TryToDelegateFunctionCall(DistributedPlanningContext *planContext)
 	if (ExecutingInsertSelect())
 	{
 		ereport(DEBUG1, (errmsg("not pushing down function calls in INSERT ... SELECT")));
-		ReleaseCacheEntry(procedure);
+		ReleaseObjectCacheEntry(procedure);
 		return NULL;
 	}
 
@@ -248,7 +248,7 @@ TryToDelegateFunctionCall(DistributedPlanningContext *planContext)
 		/* cannot delegate function calls in a multi-statement transaction */
 		ereport(DEBUG1, (errmsg("not pushing down function calls in "
 								"a multi-statement transaction")));
-		ReleaseCacheEntry(procedure);
+		ReleaseObjectCacheEntry(procedure);
 		return NULL;
 	}
 
@@ -256,7 +256,7 @@ TryToDelegateFunctionCall(DistributedPlanningContext *planContext)
 		procedure->distributionArgIndex >= list_length(funcExpr->args))
 	{
 		ereport(DEBUG1, (errmsg("function call does not have a distribution argument")));
-		ReleaseCacheEntry(procedure);
+		ReleaseObjectCacheEntry(procedure);
 		return NULL;
 	}
 
@@ -264,7 +264,7 @@ TryToDelegateFunctionCall(DistributedPlanningContext *planContext)
 	{
 		ereport(DEBUG1, (errmsg("arguments in a distributed function must "
 								"be constant expressions")));
-		ReleaseCacheEntry(procedure);
+		ReleaseObjectCacheEntry(procedure);
 		return NULL;
 	}
 
@@ -272,29 +272,26 @@ TryToDelegateFunctionCall(DistributedPlanningContext *planContext)
 	if (colocatedRelationId == InvalidOid)
 	{
 		ereport(DEBUG1, (errmsg("function does not have co-located tables")));
-		ReleaseCacheEntry(procedure);
+		ReleaseObjectCacheEntry(procedure);
 		return NULL;
 	}
 
-	/* TODO ideally we wouldn't have to interlace these cache loads */
-	ReleaseCacheEntry(procedure);
 	distTable = GetCitusTableCacheEntry(colocatedRelationId);
 	partitionColumn = distTable->partitionColumn;
 	replicationModel = distTable->replicationModel;
-	ReleaseCacheEntry(distTable);
-	procedure = LookupDistObjectCacheEntry(ProcedureRelationId, funcExpr->funcid, 0);
+	ReleaseTableCacheEntry(distTable);
 
 	if (partitionColumn == NULL)
 	{
 		/* This can happen if colocated with a reference table. Punt for now. */
 		ereport(DEBUG1, (errmsg(
 							 "cannnot push down function call for reference tables")));
-		ReleaseCacheEntry(procedure);
+		ReleaseObjectCacheEntry(procedure);
 		return NULL;
 	}
 
 	partitionValue = (Const *) list_nth(funcExpr->args, procedure->distributionArgIndex);
-	ReleaseCacheEntry(procedure);
+	ReleaseObjectCacheEntry(procedure);
 
 	if (IsA(partitionValue, Param))
 	{
@@ -339,7 +336,7 @@ TryToDelegateFunctionCall(DistributedPlanningContext *planContext)
 
 	distTable = GetCitusTableCacheEntry(colocatedRelationId);
 	shardInterval = FindShardInterval(partitionValueDatum, distTable);
-	ReleaseCacheEntry(distTable);
+	ReleaseTableCacheEntry(distTable);
 	if (shardInterval == NULL)
 	{
 		ereport(DEBUG1, (errmsg("cannot push down call, failed to find shard interval")));
@@ -404,7 +401,7 @@ TryToDelegateFunctionCall(DistributedPlanningContext *planContext)
 	/* worker will take care of any necessary locking, treat query as read-only */
 	distributedPlan->modLevel = ROW_MODIFY_READONLY;
 
-	ReleaseCacheEntry(distTable);
+	ReleaseTableCacheEntry(distTable);
 
 	return FinalizePlan(planContext->plan, distributedPlan);
 }

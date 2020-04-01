@@ -631,11 +631,11 @@ CheckReplicationModel(Oid sourceRelationId, Oid targetRelationId)
 {
 	CitusTableCacheEntry *sourceTableEntry = GetCitusTableCacheEntry(sourceRelationId);
 	char sourceReplicationModel = sourceTableEntry->replicationModel;
-	ReleaseCacheEntry(sourceTableEntry);
+	ReleaseTableCacheEntry(sourceTableEntry);
 
 	CitusTableCacheEntry *targetTableEntry = GetCitusTableCacheEntry(targetRelationId);
 	char targetReplicationModel = targetTableEntry->replicationModel;
-	ReleaseCacheEntry(targetTableEntry);
+	ReleaseTableCacheEntry(targetTableEntry);
 
 	if (sourceReplicationModel != targetReplicationModel)
 	{
@@ -778,7 +778,7 @@ TableColocationId(Oid distributedTableId)
 	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(distributedTableId);
 
 	uint32 colocationId = cacheEntry->colocationId;
-	ReleaseCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheEntry);
 	return colocationId;
 }
 
@@ -927,7 +927,7 @@ ColocatedShardIntervalList(ShardInterval *shardInterval)
 	char partitionMethod = cacheEntry->partitionMethod;
 	int shardIntervalArrayLength PG_USED_FOR_ASSERTS_ONLY =
 		cacheEntry->shardIntervalArrayLength;
-	ReleaseCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheEntry);
 
 	/*
 	 * If distribution type of the table is not hash or reference, each shard of
@@ -969,7 +969,7 @@ ColocatedShardIntervalList(ShardInterval *shardInterval)
 		ShardInterval *copyShardInterval = CitusMakeNode(ShardInterval);
 		CopyShardInterval(colocatedShardInterval, copyShardInterval);
 
-		ReleaseCacheEntry(colocatedTableCacheEntry);
+		ReleaseTableCacheEntry(colocatedTableCacheEntry);
 
 		colocatedShardList = lappend(colocatedShardList, copyShardInterval);
 	}
@@ -1061,7 +1061,7 @@ ColocatedShardIdInRelation(Oid relationId, int shardIndex)
 	CitusTableCacheEntry *tableCacheEntry = GetCitusTableCacheEntry(relationId);
 
 	uint64 shardId = tableCacheEntry->sortedShardIntervalArray[shardIndex]->shardId;
-	ReleaseCacheEntry(tableCacheEntry);
+	ReleaseTableCacheEntry(tableCacheEntry);
 	return shardId;
 }
 

@@ -207,7 +207,7 @@ ErrorIfTableCannotBeReplicated(Oid relationId)
 
 	CitusTableCacheEntry *tableEntry = GetCitusTableCacheEntry(relationId);
 	char replicationModel = tableEntry->replicationModel;
-	ReleaseCacheEntry(tableEntry);
+	ReleaseTableCacheEntry(tableEntry);
 	char *relationName = get_rel_name(relationId);
 
 	/*

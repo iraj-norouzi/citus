@@ -1966,7 +1966,7 @@ BuildMapMergeJob(Query *jobQuery, List *dependentJobList, Var *partitionKey,
 
 		bool hasUninitializedShardInterval = cache->hasUninitializedShardInterval;
 
-		ReleaseCacheEntry(cache);
+		ReleaseTableCacheEntry(cache);
 
 		if (hasUninitializedShardInterval)
 		{
@@ -2193,7 +2193,7 @@ QueryPushdownSqlTaskList(Query *query, uint64 jobId,
 		CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(relationId);
 		if (cacheEntry->partitionMethod == DISTRIBUTE_BY_NONE)
 		{
-			ReleaseCacheEntry(cacheEntry);
+			ReleaseTableCacheEntry(cacheEntry);
 			continue;
 		}
 
@@ -2214,7 +2214,7 @@ QueryPushdownSqlTaskList(Query *query, uint64 jobId,
 			maxShardOffset = -1;
 		}
 
-		ReleaseCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheEntry);
 
 		/*
 		 * For left joins we don't care about the shards pruned for the right hand side.
@@ -2381,7 +2381,7 @@ ErrorIfUnsupportedShardDistribution(Query *query)
 										  "with overlapping shard intervals are "
 										  "not supported")));
 			}
-			ReleaseCacheEntry(distTableEntry);
+			ReleaseTableCacheEntry(distTableEntry);
 
 			appendDistributedRelationCount++;
 		}
@@ -2506,7 +2506,7 @@ QueryPushdownTaskCreate(Query *originalQuery, int shardIndex,
 			shardInterval = cacheEntry->sortedShardIntervalArray[shardIndex];
 			anchorShardId = shardInterval->shardId;
 		}
-		ReleaseCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheEntry);
 
 		taskShardList = lappend(taskShardList, list_make1(shardInterval));
 
@@ -2576,12 +2576,12 @@ CoPartitionedTables(Oid firstRelationId, Oid secondRelationId)
 {
 	CitusTableCacheEntry *firstTableCache = GetCitusTableCacheEntry(firstRelationId);
 	CitusTableCacheEntry firstTableCacheData = *firstTableCache;
-	ReleaseCacheEntry(firstTableCache);
+	ReleaseTableCacheEntry(firstTableCache);
 	firstTableCache = &firstTableCacheData;
 
 	CitusTableCacheEntry *secondTableCache = GetCitusTableCacheEntry(secondRelationId);
 	CitusTableCacheEntry secondTableCacheData = *secondTableCache;
-	ReleaseCacheEntry(secondTableCache);
+	ReleaseTableCacheEntry(secondTableCache);
 	secondTableCache = &secondTableCacheData;
 
 	ShardInterval **sortedFirstIntervalArray = firstTableCache->sortedShardIntervalArray;
@@ -3983,7 +3983,7 @@ ShardIntervalsOverlap(ShardInterval *firstInterval, ShardInterval *secondInterva
 	FmgrInfo *comparisonFunction = intervalRelation->shardIntervalCompareFunction;
 	Oid collation = intervalRelation->partitionColumn->varcollid;
 
-	ReleaseCacheEntry(intervalRelation);
+	ReleaseTableCacheEntry(intervalRelation);
 
 	Datum firstMin = firstInterval->minValue;
 	Datum firstMax = firstInterval->maxValue;

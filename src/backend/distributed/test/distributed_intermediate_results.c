@@ -77,7 +77,7 @@ partition_task_list_results(PG_FUNCTION_ARGS)
 												  partitionColumnIndex,
 												  &targetRelation, binaryFormat);
 
-	ReleaseCacheEntry(targetRelation);
+	ReleaseTableCacheEntry(targetRelation);
 
 	TupleDesc tupleDescriptor = NULL;
 	Tuplestorestate *tupleStore = SetupTuplestore(fcinfo, &tupleDescriptor);
@@ -182,7 +182,7 @@ redistribute_task_list_results(PG_FUNCTION_ARGS)
 
 	tuplestore_donestoring(tupleStore);
 
-	ReleaseCacheEntry(targetRelation);
+	ReleaseTableCacheEntry(targetRelation);
 
 	PG_RETURN_DATUM(0);
 }

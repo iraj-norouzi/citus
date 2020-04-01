@@ -150,7 +150,7 @@ CreateShardsWithRoundRobinPolicy(Oid distributedTableId, int32 shardCount,
 	/* make sure that RF=1 if the table is streaming replicated */
 	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(distributedTableId);
 	char replicationModel = cacheEntry->replicationModel;
-	ReleaseCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheEntry);
 	if (replicationModel == REPLICATION_MODEL_STREAMING &&
 		replicationFactor > 1)
 	{

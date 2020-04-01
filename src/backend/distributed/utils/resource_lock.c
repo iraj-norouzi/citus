@@ -375,7 +375,7 @@ SetLocktagForShardDistributionMetadata(int64 shardId, LOCKTAG *tag)
 													   shardInterval->shardIndex);
 	}
 
-	ReleaseCacheEntry(citusTable);
+	ReleaseTableCacheEntry(citusTable);
 }
 
 
@@ -394,7 +394,7 @@ LockReferencedReferenceShardDistributionMetadata(uint64 shardId, LOCKMODE lockMo
 
 	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(relationId);
 	List *referencedRelationList = cacheEntry->referencedRelationsViaForeignKey;
-	ReleaseCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheEntry);
 	List *shardIntervalList = GetSortedReferenceShardIntervals(referencedRelationList);
 
 	if (list_length(shardIntervalList) > 0 && ClusterHasKnownMetadataWorkers())
@@ -430,7 +430,7 @@ LockReferencedReferenceShardResources(uint64 shardId, LOCKMODE lockMode)
 	 * relations too.
 	 */
 	List *referencedRelationList = cacheEntry->referencedRelationsViaForeignKey;
-	ReleaseCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheEntry);
 	List *referencedShardIntervalList =
 		GetSortedReferenceShardIntervals(referencedRelationList);
 

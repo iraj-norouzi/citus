@@ -208,7 +208,7 @@ FastPathRouterQuery(Query *query, Node **distributionKeyValue)
 	if (!(cacheEntry->partitionMethod == DISTRIBUTE_BY_HASH ||
 		  cacheEntry->partitionMethod == DISTRIBUTE_BY_NONE))
 	{
-		ReleaseCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheEntry);
 		return false;
 	}
 
@@ -216,11 +216,11 @@ FastPathRouterQuery(Query *query, Node **distributionKeyValue)
 	if (joinTree == NULL ||
 		(cacheEntry->partitionMethod != DISTRIBUTE_BY_NONE && joinTree->quals == NULL))
 	{
-		ReleaseCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheEntry);
 		return false;
 	}
 
-	ReleaseCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheEntry);
 
 	/* if that's a reference table, we don't need to check anything further */
 	Var *distributionKey = PartitionColumn(distributedTableId, 1);

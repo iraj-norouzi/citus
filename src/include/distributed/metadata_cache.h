@@ -155,7 +155,8 @@ extern bool MajorVersionsCompatible(char *leftVersion, char *rightVersion);
 extern void ErrorIfInconsistentShardIntervals(CitusTableCacheEntry *cacheEntry);
 extern void EnsureModificationsCanRun(void);
 extern char LookupDistributionMethod(Oid distributionMethodOid);
-extern void ReleaseCacheEntry(void *cacheEntry);
+extern void ReleaseObjectCacheEntry(DistObjectCacheEntry *cacheEntry);
+extern void ReleaseTableCacheEntry(CitusTableCacheEntry *cacheEntry);
 
 /* access WorkerNodeHash */
 extern HTAB * GetWorkerNodeHash(void);

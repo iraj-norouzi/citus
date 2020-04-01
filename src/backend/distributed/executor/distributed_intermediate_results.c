@@ -342,7 +342,7 @@ ExecutePartitionTaskList(List *taskList, CitusTableCacheEntry **targetRelation)
 					   INT8OID, -1, 0);
 
 	Oid targetRelationId = (*targetRelation)->relationId;
-	ReleaseCacheEntry(*targetRelation);
+	ReleaseTableCacheEntry(*targetRelation);
 
 	bool errorOnAnyFailure = false;
 	resultStore = ExecuteSelectTasksIntoTupleStore(taskList, resultDescriptor,
