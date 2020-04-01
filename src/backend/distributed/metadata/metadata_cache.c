@@ -761,7 +761,7 @@ LookupShardCacheEntry(int64 shardId)
 		 */
 		AcceptInvalidationMessages();
 
-		if (!shardEntry->tableEntry->isValid)
+		if (true || !shardEntry->tableEntry->isValid)
 		{
 			Oid oldRelationId = shardEntry->tableEntry->relationId;
 			Oid currentRelationId = LookupShardRelation(shardId, false);
@@ -896,7 +896,7 @@ LookupCitusTableCacheEntry(Oid relationId)
 		 */
 		AcceptInvalidationMessages();
 
-		if (cacheEntry->isValid)
+		if (false && cacheEntry->isValid)
 		{
 			return cacheEntry;
 		}
@@ -972,7 +972,7 @@ LookupDistObjectCacheEntry(Oid classid, Oid objid, int32 objsubid)
 		 */
 		AcceptInvalidationMessages();
 
-		if (cacheEntry->isValid)
+		if (false && cacheEntry->isValid)
 		{
 			return cacheEntry;
 		}
