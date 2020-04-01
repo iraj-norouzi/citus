@@ -2574,16 +2574,10 @@ QueryPushdownTaskCreate(Query *originalQuery, int shardIndex,
 bool
 CoPartitionedTables(Oid firstRelationId, Oid secondRelationId)
 {
+	Assert(firstRelationId != secondRelationId);
+
 	CitusTableCacheEntry *firstTableCache = GetCitusTableCacheEntry(firstRelationId);
-	CitusTableCacheEntry firstTableCacheData = *firstTableCache;
-	ReleaseTableCacheEntry(firstTableCache);
-	firstTableCache = &firstTableCacheData;
-
 	CitusTableCacheEntry *secondTableCache = GetCitusTableCacheEntry(secondRelationId);
-	CitusTableCacheEntry secondTableCacheData = *secondTableCache;
-	ReleaseTableCacheEntry(secondTableCache);
-	secondTableCache = &secondTableCacheData;
-
 	ShardInterval **sortedFirstIntervalArray = firstTableCache->sortedShardIntervalArray;
 	ShardInterval **sortedSecondIntervalArray =
 		secondTableCache->sortedShardIntervalArray;

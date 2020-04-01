@@ -51,6 +51,7 @@ typedef struct
 	 * of the cache entry?
 	 */
 	bool isValid;
+	bool isLive;
 
 	bool isCitusTable;
 	bool hasUninitializedShardInterval;
@@ -110,6 +111,7 @@ typedef struct DistObjectCacheEntry
 	DistObjectCacheEntryKey key;
 
 	bool isValid;
+	bool isLive;
 	bool isDistributed;
 
 	int distributionArgIndex;

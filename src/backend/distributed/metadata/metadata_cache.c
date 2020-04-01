@@ -189,14 +189,6 @@ static ScanKeyData DistPartitionScanKey[1];
 static ScanKeyData DistShardScanKey[1];
 static ScanKeyData DistObjectScanKey[3];
 
-#ifdef USE_ASSERT_CHECKING
-static bool ObjectCacheInUse = false;
-static bool TableCacheInUse = false;
-#define SET_CACHE_IN_USE(type, x) ((void) (type ## CacheInUse = (x)))
-#else
-#define SET_CACHE_IN_USE(type, x) ((void) (x))
-#endif
-
 /* local function forward declarations */
 static bool IsCitusTableViaCatalog(Oid relationId);
 static ShardCacheEntry * LookupShardCacheEntry(int64 shardId);
@@ -283,8 +275,8 @@ EnsureModificationsCanRun(void)
 void
 ReleaseTableCacheEntry(CitusTableCacheEntry *cacheEntry)
 {
-	Assert(TableCacheInUse);
-	SET_CACHE_IN_USE(Table, false);
+	Assert(cacheEntry->isLive);
+	cacheEntry->isLive = false;
 }
 
 
@@ -295,8 +287,8 @@ ReleaseTableCacheEntry(CitusTableCacheEntry *cacheEntry)
 void
 ReleaseObjectCacheEntry(DistObjectCacheEntry *cacheEntry)
 {
-	Assert(ObjectCacheInUse);
-	SET_CACHE_IN_USE(Object, false);
+	Assert(cacheEntry->isLive);
+	cacheEntry->isLive = false;
 }
 
 
@@ -894,10 +886,10 @@ LookupCitusTableCacheEntry(Oid relationId)
 												   &foundInCache);
 
 	/* return valid matches */
-	Assert(!TableCacheInUse);
-	SET_CACHE_IN_USE(Table, true);
 	if (foundInCache)
 	{
+		Assert(!cacheEntry->isLive);
+
 		/*
 		 * We might have some concurrent metadata changes. In order to get the changes,
 		 * we first need to accept the cache invalidation messages.
@@ -930,10 +922,10 @@ LookupCitusTableCacheEntry(Oid relationId)
 
 	/* and finally mark as valid */
 	cacheEntry->isValid = true;
+	cacheEntry->isLive = true;
 
 	RESUME_INTERRUPTS();
 
-	SET_CACHE_IN_USE(Table, true);
 	return cacheEntry;
 }
 
@@ -969,12 +961,11 @@ LookupDistObjectCacheEntry(Oid classid, Oid objid, int32 objsubid)
 	DistObjectCacheEntry *cacheEntry = hash_search(DistObjectCacheHash, &hashKey,
 												   HASH_ENTER, &foundInCache);
 
-	Assert(!ObjectCacheInUse);
-	SET_CACHE_IN_USE(Object, true);
-
 	/* return valid matches */
 	if (foundInCache)
 	{
+		Assert(!cacheEntry->isLive);
+
 		/*
 		 * We might have some concurrent metadata changes. In order to get the changes,
 		 * we first need to accept the cache invalidation messages.
@@ -1022,6 +1013,7 @@ LookupDistObjectCacheEntry(Oid classid, Oid objid, int32 objsubid)
 						  isNullArray);
 
 		cacheEntry->isValid = true;
+		cacheEntry->isLive = true;
 		cacheEntry->isDistributed = true;
 
 		cacheEntry->distributionArgIndex =
@@ -1033,6 +1025,7 @@ LookupDistObjectCacheEntry(Oid classid, Oid objid, int32 objsubid)
 	else
 	{
 		cacheEntry->isValid = true;
+		cacheEntry->isLive = true;
 		cacheEntry->isDistributed = false;
 	}
 
