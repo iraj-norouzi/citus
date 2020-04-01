@@ -626,6 +626,16 @@ static int RebuildWaitEventSet(DistributedExecution *execution);
 static void ProcessWaitEvents(DistributedExecution *execution, WaitEvent *events, int
 							  eventCount, bool *cancellationReceived);
 static long MillisecondsBetweenTimestamps(instr_time startTime, instr_time endTime);
+static uint64 ExecuteTaskListExtendedInternal(RowModifyLevel modLevel,
+											  List *taskList,
+											  TupleDesc tupleDescriptor,
+											  Tuplestorestate *tupleStore,
+											  bool hasReturning,
+											  int targetPoolSize,
+											  TransactionProperties *xactProperties,
+											  List *jobIdList,
+											  bool localExecutionSupported,
+											  bool isUtilityCommand);
 
 
 /*
@@ -786,10 +796,12 @@ static void
 RunLocalExecution(CitusScanState *scanState, DistributedExecution *execution)
 {
 	EState *estate = ScanStateGetExecutorState(scanState);
+	bool isUtilityCommand = false;
 	uint64 rowsProcessed = ExecuteLocalTaskListExtended(execution->localTaskList,
 														estate->es_param_list_info,
 														scanState->distributedPlan,
-														scanState->tuplestorestate);
+														scanState->tuplestorestate,
+														isUtilityCommand);
 
 	/*
 	 * We're deliberately not setting execution->rowsProcessed here. The main reason
@@ -818,57 +830,34 @@ AdjustDistributedExecutionAfterLocalExecution(DistributedExecution *execution)
 
 
 /*
- * ExecuteUtilityTaskListWithoutResults is a wrapper around executing task
- * list for utility commands. For remote tasks, it simply calls in adaptive
- * executor's task execution function. For local tasks (if any), kicks Process
- * Utility via CitusProcessUtility for utility commands. As some local utility
- * commands can trigger udf calls, this function also processes those udf calls
- * locally.
+ * ExecuteUtilityTaskList is a wrapper around executing task
+ * list for utility commands.
  */
-void
-ExecuteUtilityTaskListWithoutResults(List *taskList, bool localExecutionSupported)
+uint64
+ExecuteUtilityTaskList(List *utilityTaskList, bool localExecutionSupported)
 {
-	RowModifyLevel rowModifyLevel = ROW_MODIFY_NONE;
+	RowModifyLevel modLevel = ROW_MODIFY_NONE;
+	TupleDesc tupleDescriptor = NULL;
+	Tuplestorestate *tupleStore = NULL;
+	bool hasReturning = false;
+	List *jobIdList = NIL;
+	bool isUtilityCommand = true;
 
-	List *localTaskList = NIL;
-	List *remoteTaskList = NIL;
+	TransactionProperties xactProperties =
+		DecideTransactionPropertiesForTaskList(modLevel, utilityTaskList, false);
 
-	/*
-	 * Divide tasks into two if localExecutionSupported is set to true and execute
-	 * the local tasks
-	 */
-	if (localExecutionSupported && ShouldExecuteTasksLocally(taskList))
-	{
-		/*
-		 * Either we are executing a utility command or a UDF call triggered
-		 * by such a command, it has to be a modifying one
-		 */
-		bool readOnlyPlan = false;
 
-		/* set local (if any) & remote tasks */
-		ExtractLocalAndRemoteTasks(readOnlyPlan, taskList, &localTaskList,
-								   &remoteTaskList);
-
-		/* execute local tasks */
-		ExecuteLocalUtilityTaskList(localTaskList);
-	}
-	else
-	{
-		/* all tasks should be executed via remote connections */
-		remoteTaskList = taskList;
-	}
-
-	/* execute remote tasks if any */
-	if (list_length(remoteTaskList) > 0)
-	{
-		/*
-		 * We already executed tasks locally. We should ideally remove this method and
-		 * let ExecuteTaskListExtended handle the local execution.
-		 */
-		localExecutionSupported = false;
-		ExecuteTaskList(rowModifyLevel, remoteTaskList, MaxAdaptiveExecutorPoolSize,
-						localExecutionSupported);
-	}
+	return ExecuteTaskListExtendedInternal(
+		modLevel,
+		utilityTaskList,
+		tupleDescriptor,
+		tupleStore,
+		hasReturning,
+		MaxAdaptiveExecutorPoolSize,
+		&xactProperties,
+		jobIdList,
+		localExecutionSupported,
+		isUtilityCommand);
 }
 
 
@@ -947,6 +936,38 @@ ExecuteTaskListExtended(RowModifyLevel modLevel, List *taskList,
 						List *jobIdList,
 						bool localExecutionSupported)
 {
+	bool isUtilityCommand = false;
+	return ExecuteTaskListExtendedInternal(
+		modLevel,
+		taskList,
+		tupleDescriptor,
+		tupleStore,
+		hasReturning,
+		targetPoolSize,
+		xactProperties,
+		jobIdList,
+		localExecutionSupported,
+		isUtilityCommand
+		);
+}
+
+
+/*
+ * ExecuteTaskListExtendedInternal sets up the execution for given task list and
+ * runs it.
+ */
+static uint64
+ExecuteTaskListExtendedInternal(RowModifyLevel modLevel,
+								List *taskList,
+								TupleDesc tupleDescriptor,
+								Tuplestorestate *tupleStore,
+								bool hasReturning,
+								int targetPoolSize,
+								TransactionProperties *xactProperties,
+								List *jobIdList,
+								bool localExecutionSupported,
+								bool isUtilityCommand)
+{
 	ParamListInfo paramListInfo = NULL;
 	uint64 locallyProcessedRows = 0;
 	List *localTaskList = NIL;
@@ -959,7 +980,14 @@ ExecuteTaskListExtended(RowModifyLevel modLevel, List *taskList,
 		/* set local (if any) & remote tasks */
 		ExtractLocalAndRemoteTasks(readOnlyPlan, taskList, &localTaskList,
 								   &remoteTaskList);
-		locallyProcessedRows += ExecuteLocalTaskList(localTaskList, tupleStore);
+		if (isUtilityCommand)
+		{
+			locallyProcessedRows += ExecuteLocalUtilityTaskList(localTaskList);
+		}
+		else
+		{
+			locallyProcessedRows += ExecuteLocalTaskList(localTaskList, tupleStore);
+		}
 	}
 	else
 	{

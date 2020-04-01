@@ -85,8 +85,6 @@ extern uint64 ExecuteTaskListIntoTupleStore(RowModifyLevel modLevel, List *taskL
 											TupleDesc tupleDescriptor,
 											Tuplestorestate *tupleStore,
 											bool hasReturning);
-extern void ExecuteUtilityTaskListWithoutResults(List *taskList, bool
-												 localExecutionSupported);
 extern bool IsCitusCustomState(PlanState *planState);
 extern TupleTableSlot * CitusExecScan(CustomScanState *node);
 extern TupleTableSlot * ReturnTupleFromTuplestore(CitusScanState *scanState);
