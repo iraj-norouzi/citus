@@ -390,31 +390,6 @@ SetUpDistributedTableDependencies(WorkerNode *newWorkerNode)
 
 
 /*
- * PropagateRolesToNewNode copies the roles' attributes in the new node. Roles that do
- * not exist in the workers are not created and simply skipped.
- */
-static void
-PropagateRolesToNewNode(WorkerNode *newWorkerNode)
-{
-	if (!EnableAlterRolePropagation)
-	{
-		return;
-	}
-
-	List *ddlCommands = NIL;
-	List *alterRoleCommands = GenerateAlterRoleIfExistsCommandAllRoles();
-	List *alterRoleSetCommands = GenerateAlterRoleSetIfExistsCommands();
-
-	ddlCommands = list_concat(ddlCommands, alterRoleCommands);
-	ddlCommands = list_concat(ddlCommands, alterRoleSetCommands);
-
-	SendCommandListToWorkerInSingleTransaction(newWorkerNode->workerName,
-											   newWorkerNode->workerPort,
-											   CitusExtensionOwnerName(), ddlCommands);
-}
-
-
-/*
  * ModifiableWorkerNode gets the requested WorkerNode and also gets locks
  * required for modifying it. This fails if the node does not exist.
  */
@@ -588,7 +563,6 @@ ActivateNode(char *nodeName, int nodePort)
 
 	WorkerNode *newWorkerNode = SetNodeState(nodeName, nodePort, isActive);
 
-	PropagateRolesToNewNode(newWorkerNode);
 	SetUpDistributedTableDependencies(newWorkerNode);
 	return newWorkerNode->nodeId;
 }
