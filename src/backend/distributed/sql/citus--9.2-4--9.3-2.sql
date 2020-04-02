@@ -4,3 +4,4 @@
 
 #include "udfs/citus_extradata_container/9.3-2.sql"
 #include "udfs/update_distributed_table_colocation/9.3-2.sql"
+#include "udfs/create_or_alter_role/9.3-1.sql"
