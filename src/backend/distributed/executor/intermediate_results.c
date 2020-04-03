@@ -824,7 +824,8 @@ ReadIntermediateResultsIntoFuncOutput(FunctionCallInfo fcinfo, char *copyFormat,
 		}
 		else
 		{
-			ReadFileIntoTupleStore(resultFileName, copyFormat, tupleDescriptor, tupleStore);
+			ReadFileIntoTupleStore(resultFileName, copyFormat, tupleDescriptor,
+								   tupleStore);
 		}
 	}
 
