@@ -2382,45 +2382,21 @@ HasUnresolvedExternParamsWalker(Node *expression, ParamListInfo boundParams)
 static bool
 IsLocalReferenceTableJoin(Query *parse, List *rangeTableList)
 {
+	/*
+	 * Check if we are in the coordinator and coordinator can have reference
+	 * table placements
+	 */
+	if (!CanUseCoordinatorLocalTablesWithReferenceTables())
+	{
+		return false;
+	}
+
 	bool hasReferenceTable = false;
 	bool hasLocalTable = false;
-	ListCell *rangeTableCell = false;
 
-	bool hasReferenceTableReplica = false;
-
-	/*
-	 * We only allow join between reference tables and local tables in the
-	 * coordinator.
-	 */
-	if (!IsCoordinator())
+	RangeTblEntry *rangeTableEntry = NULL;
+	foreach_ptr(rangeTableEntry, rangeTableList)
 	{
-		return false;
-	}
-
-	/*
-	 * All groups that have pg_dist_node entries, also have reference
-	 * table replicas.
-	 */
-	PrimaryNodeForGroup(COORDINATOR_GROUP_ID, &hasReferenceTableReplica);
-
-	/*
-	 * If reference table doesn't have replicas on the coordinator, we don't
-	 * allow joins with local tables.
-	 */
-	if (!hasReferenceTableReplica)
-	{
-		return false;
-	}
-
-	if (FindNodeCheck((Node *) parse, QueryIsNotSimpleSelect))
-	{
-		return false;
-	}
-
-	foreach(rangeTableCell, rangeTableList)
-	{
-		RangeTblEntry *rangeTableEntry = (RangeTblEntry *) lfirst(rangeTableCell);
-
 		/*
 		 * Don't plan joins involving functions locally since we are not sure if
 		 * they do distributed accesses or not, and defaulting to local planning
@@ -2445,13 +2421,13 @@ IsLocalReferenceTableJoin(Query *parse, List *rangeTableList)
 			continue;
 		}
 
-		/*
-		 * We only allow local join for the relation kinds for which we can
-		 * determine deterministically that access to them are local or distributed.
-		 * For this reason, we don't allow non-materialized views.
-		 */
 		if (rangeTableEntry->relkind == RELKIND_VIEW)
 		{
+			/*
+			 * We only allow local join for the relation kinds for which we
+			 * can determine if the access to them are local or distributed.
+			 * For this reason, we don't allow non-materialized views.
+			 */
 			return false;
 		}
 
@@ -2461,19 +2437,36 @@ IsLocalReferenceTableJoin(Query *parse, List *rangeTableList)
 			continue;
 		}
 
-		CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(
-			rangeTableEntry->relid);
-		if (cacheEntry->partitionMethod == DISTRIBUTE_BY_NONE)
+		char distributionMethod = PartitionMethod(rangeTableEntry->relid);
+		if (distributionMethod == DISTRIBUTE_BY_NONE)
 		{
 			hasReferenceTable = true;
 		}
 		else
 		{
+			/*
+			 * If query includes a distributed table, we should not skip distributed
+			 * planner
+			 */
 			return false;
 		}
 	}
 
-	return hasLocalTable && hasReferenceTable;
+	/*
+	 * If query has reference table, we can skip distributed planner only if
+	 * it is a simple select query with a local table.
+	 * Note that at this point we do not have a distributed table in rte list.
+	 */
+	if (hasReferenceTable && hasLocalTable)
+	{
+		bool queryIsNotSimpleSelect = FindNodeCheck((Node *) parse,
+													QueryIsNotSimpleSelect);
+		return !queryIsNotSimpleSelect;
+	}
+	else
+	{
+		return false;
+	}
 }
 
 
