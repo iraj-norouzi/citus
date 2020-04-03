@@ -822,8 +822,10 @@ ReadIntermediateResultsIntoFuncOutput(FunctionCallInfo fcinfo, char *copyFormat,
 									  "error in a parallel process within the same "
 									  "distributed transction", resultId)));
 		}
-
-		ReadFileIntoTupleStore(resultFileName, copyFormat, tupleDescriptor, tupleStore);
+		else
+		{
+			ReadFileIntoTupleStore(resultFileName, copyFormat, tupleDescriptor, tupleStore);
+		}
 	}
 
 	tuplestore_donestoring(tupleStore);
