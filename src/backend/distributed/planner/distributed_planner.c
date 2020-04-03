@@ -2442,6 +2442,10 @@ IsLocalReferenceTableJoin(Query *parse, List *rangeTableList)
 		{
 			hasReferenceTable = true;
 		}
+		else if (distributionMethod == COORDINATOR_TABLE)
+		{
+			Assert(false);
+		}
 		else
 		{
 			/*
