@@ -127,7 +127,7 @@ ALTER EXTENSION citus UPDATE TO '9.2-4';
  * but we do not support explicitly updating it to to 9.3-1.
  * Hence below update (to 9.3-1) command should fail.
  */
- ALTER EXTENSION citus UPDATE TO '9.3-1';
+ALTER EXTENSION citus UPDATE TO '9.3-1';
 ERROR:  extension "citus" has no update path from version "9.2-4" to version "9.3-1"
 ALTER EXTENSION citus UPDATE TO '9.3-2';
 -- show running version
@@ -367,7 +367,10 @@ HINT:  You can manually create a database and its extensions on workers.
 \c - - - :master_port
 \c another
 CREATE EXTENSION citus;
+SET citus.enable_object_propagation TO off; -- prevent distributed transactions during add node
 SELECT FROM master_add_node('localhost', :worker_1_port);
+WARNING:  citus.enable_object_propagation is off, not creating distributed objects on worker
+DETAIL:  distributed objects are only kept in sync when citus.enable_object_propagation is set to on. Newly activated nodes will not get these objects created
 --
 (1 row)
 
