@@ -1868,8 +1868,6 @@ void
 multi_relation_restriction_hook(PlannerInfo *root, RelOptInfo *relOptInfo,
 								Index restrictionIndex, RangeTblEntry *rte)
 {
-	CitusTableCacheEntry *cacheEntry = NULL;
-
 	if (ReplaceCitusExtraDataContainer && IsCitusExtraDataContainerRelation(rte))
 	{
 		/*
@@ -1932,7 +1930,7 @@ multi_relation_restriction_hook(PlannerInfo *root, RelOptInfo *relOptInfo,
 	 */
 	if (distributedTable)
 	{
-		cacheEntry = GetCitusTableCacheEntry(rte->relid);
+		CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(rte->relid);
 
 		relationRestrictionContext->allReferenceTables &=
 			(cacheEntry->partitionMethod == DISTRIBUTE_BY_NONE);
