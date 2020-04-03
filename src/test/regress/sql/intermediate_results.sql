@@ -49,7 +49,7 @@ CREATE FUNCTION raise_failed_execution_int_result(query text) RETURNS void AS $$
 BEGIN
         EXECUTE query;
         EXCEPTION WHEN OTHERS THEN
-        IF SQLERRM LIKE '%does not exist%' THEN
+        IF SQLERRM LIKE '%Query could not find the intermediate result file%' THEN
                 RAISE 'Task failed to execute';
         ELSIF SQLERRM LIKE '%could not receive query results%' THEN
           RAISE 'Task failed to execute';
