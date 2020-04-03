@@ -41,8 +41,8 @@
 
 /* local function forward declarations */
 static List * WorkersWithoutReferenceTablePlacement(uint64 shardId);
-static void CopyShardPlacementToNewWorkerNode(ShardPlacement *sourceShardPlacement,
-											  WorkerNode *newWorkerNode);
+static void CopyShardPlacementToWorkerNode(ShardPlacement *sourceShardPlacement,
+										   WorkerNode *workerNode, const char *userName);
 static void ReplicateSingleShardTableToAllNodes(Oid relationId);
 static void ReplicateShardToAllNodes(ShardInterval *shardInterval);
 static void ReplicateShardToNode(ShardInterval *shardInterval, char *nodeName,
@@ -100,12 +100,27 @@ replicate_reference_tables(PG_FUNCTION_ARGS)
 void
 EnsureReferenceTablesExistOnAllNodes(void)
 {
+	/* prevent tables from being dropped */
+	Relation pgDistPartition = heap_open(DistPartitionRelationId(), ShareLock);
+
+	/*
+	 * This will also get a lock on pg_dist_partition which will prevent
+	 * concurrent table drops.
+	 */
 	List *referenceTableIdList = ReferenceTableOidList();
-	if (list_length(referenceTableIdList) == 0)
+	if (referenceTableIdList == NIL)
 	{
 		/* no reference tables exist */
+		ereport(DEBUG3, (errmsg("skipping master_copy_shard_placement"),
+						 errdetail("no reference tables")));
+		heap_close(pgDistPartition, ShareLock);
+
 		return;
 	}
+
+	/* prevent this function from running concurrently with itself */
+	int colocationId = CreateReferenceTableColocationId();
+	LockColocationId(colocationId, ExclusiveLock);
 
 	Oid referenceTableId = linitial_oid(referenceTableIdList);
 	List *shardIntervalList = LoadShardIntervalList(referenceTableId);
@@ -119,14 +134,14 @@ EnsureReferenceTablesExistOnAllNodes(void)
 	ShardInterval *shardInterval = (ShardInterval *) linitial(shardIntervalList);
 	uint64 shardId = shardInterval->shardId;
 
-	/* prevent this function from running concurrently with itself */
-	int colocationId = TableColocationId(referenceTableId);
-	LockColocationId(colocationId, ExclusiveLock);
-
 	List *newWorkersList = WorkersWithoutReferenceTablePlacement(shardId);
 	if (list_length(newWorkersList) == 0)
 	{
+		ereport(DEBUG3, (errmsg("skipping master_copy_shard_placement"),
+						 errdetail("no new workers")));
+
 		/* nothing to do, no need for lock */
+		heap_close(pgDistPartition, ShareLock);
 		UnlockColocationId(colocationId, ExclusiveLock);
 		return;
 	}
@@ -168,7 +183,13 @@ EnsureReferenceTablesExistOnAllNodes(void)
 	WorkerNode *newWorkerNode = NULL;
 	foreach_ptr(newWorkerNode, newWorkersList)
 	{
-		CopyShardPlacementToNewWorkerNode(sourceShardPlacement, newWorkerNode);
+		/*
+		 * Call master_copy_shard_placement using citus extension owner. Current
+		 * user might not have permissions to do the copy.
+		 */
+		const char *userName = CitusExtensionOwnerName();
+		CopyShardPlacementToWorkerNode(sourceShardPlacement, newWorkerNode,
+									   userName);
 	}
 
 	/*
@@ -176,6 +197,9 @@ EnsureReferenceTablesExistOnAllNodes(void)
 	 * more worker nodes without placements, unless nodes were added concurrently
 	 */
 	UnlockColocationId(colocationId, ExclusiveLock);
+
+	/* keep lock to block concurrent table drops */
+	heap_close(pgDistPartition, NoLock);
 }
 
 
@@ -235,16 +259,16 @@ WorkersWithoutReferenceTablePlacement(uint64 shardId)
 
 
 /*
- * CopyShardPlacementToNewWorkerNode runs master_copy_shard_placement in a
- * subtransaction by connecting to localhost.
+ * CopyShardPlacementToWorkerNode runs master_copy_shard_placement
+ * using the given username by connecting to localhost.
  */
 static void
-CopyShardPlacementToNewWorkerNode(ShardPlacement *sourceShardPlacement,
-								  WorkerNode *newWorkerNode)
+CopyShardPlacementToWorkerNode(ShardPlacement *sourceShardPlacement,
+							   WorkerNode *workerNode,
+							   const char *userName)
 {
 	int connectionFlags = OUTSIDE_TRANSACTION;
 	StringInfo queryString = makeStringInfo();
-	const char *userName = CitusExtensionOwnerName();
 
 	MultiConnection *connection = GetNodeUserDatabaseConnection(
 		connectionFlags, "localhost", PostPortNumber,
@@ -256,8 +280,10 @@ CopyShardPlacementToNewWorkerNode(ShardPlacement *sourceShardPlacement,
 					 sourceShardPlacement->shardId,
 					 quote_literal_cstr(sourceShardPlacement->nodeName),
 					 sourceShardPlacement->nodePort,
-					 quote_literal_cstr(newWorkerNode->workerName),
-					 newWorkerNode->workerPort);
+					 quote_literal_cstr(workerNode->workerName),
+					 workerNode->workerPort);
+
+	elog(DEBUG2, "%s", queryString->data);
 
 	ExecuteCriticalRemoteCommand(connection, queryString->data);
 }
