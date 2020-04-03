@@ -85,7 +85,7 @@ s/(ERROR.*)pgsql_job_cache\/([0-9]+_[0-9]+_[0-9]+)\/(.*).data/\1pgsql_job_cache\
 
 # when asserts enabled, WARNING becomes ERROR, so always print WARNING for the
 # sake of simplicity
-s/(.*)Query could not find the intermediate result file "(.*)", it was mostly likely deleted due to an error in a parallel process within the same distributed transction/WARNING: Query could not find the intermediate result file "X_XX", it was mostly likely deleted due to an error in a parallel process within the same distributed transction/g
+s/(.*)Query could not find the intermediate result file "(.*)", it was mostly likely deleted due to an error in a parallel process within the same distributed transaction/WARNING: Query could not find the intermediate result file "X_XX", it was mostly likely deleted due to an error in a parallel process within the same distributed transaction/g
 
 # assign_distributed_transaction id params
 s/(NOTICE.*)assign_distributed_transaction_id\([0-9]+, [0-9]+, '.*'\)/\1assign_distributed_transaction_id\(xx, xx, 'xxxxxxx'\)/g
