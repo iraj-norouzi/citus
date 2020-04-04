@@ -186,7 +186,8 @@ typedef struct CitusCustomScanPath
 extern PlannedStmt * distributed_planner(Query *parse, int cursorOptions,
 										 ParamListInfo boundParams);
 extern List * ExtractRangeTableEntryList(Query *query);
-extern List * ExtractReferenceTableRTEList(List *rteList);
+extern void ExtractReferenceTableRTEList(List *rteList, List **referenceTableRTEList,
+										 List **coordinatorTableRTEList);
 extern bool NeedsDistributedPlanning(Query *query);
 extern struct DistributedPlan * GetDistributedPlan(CustomScan *node);
 extern void multi_relation_restriction_hook(PlannerInfo *root, RelOptInfo *relOptInfo,

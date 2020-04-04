@@ -128,7 +128,7 @@ static void ResetPlannerRestrictionContext(
 static bool HasUnresolvedExternParamsWalker(Node *expression, ParamListInfo boundParams);
 static bool IsLocalReferenceTableJoin(Query *parse, List *rangeTableList);
 static bool QueryIsNotSimpleSelect(Node *node);
-static void UpdateReferenceTablesWithShard(List *rangeTableList);
+static void UpdateSingleShardTablesWithShard(Query *query, List *singleShardTableRTEList);
 static PlannedStmt * PlanFastPathDistributedStmt(DistributedPlanningContext *planContext,
 												 Node *distributionKeyValue);
 static PlannedStmt * PlanDistributedStmt(DistributedPlanningContext *planContext,
@@ -154,20 +154,29 @@ distributed_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	}
 	else if (CitusHasBeenLoaded())
 	{
+		List *referenceTableRTEList = NIL;
+		List *coordinatorTableRTEList = NIL;
+		ExtractReferenceTableRTEList(rangeTableList, &referenceTableRTEList,
+									 &coordinatorTableRTEList);
+
+		/* regardless of we use distributed planner, replace coordinator tables with shards */
+		UpdateSingleShardTablesWithShard(parse, coordinatorTableRTEList);
+
 		if (IsLocalReferenceTableJoin(parse, rangeTableList))
 		{
+			needsDistributedPlanning = false;
+
 			/*
 			 * For joins between reference tables and local tables, we replace
 			 * reference table names with shard tables names in the query, so
 			 * we can use the standard_planner for planning it locally.
 			 */
-			UpdateReferenceTablesWithShard(rangeTableList);
-
-			needsDistributedPlanning = false;
+			UpdateSingleShardTablesWithShard(parse, referenceTableRTEList);
 		}
 		else
 		{
 			needsDistributedPlanning = ListContainsDistributedTableRTE(rangeTableList);
+
 			if (needsDistributedPlanning)
 			{
 				fastPathRouterQuery = FastPathRouterQuery(parse, &distributionKeyValue);
@@ -321,15 +330,17 @@ ExtractRangeTableEntryList(Query *query)
 
 
 /*
- * ExtractClassifiedRangeTableEntryList extracts reference table rte's from
- * the given rte list.
- * Callers of this function are responsible for passing referenceTableRTEList
- * to be non-null and initially pointing to an empty list.
+ * ExtractClassifiedRangeTableEntryList extracts reference table and coordinator
+ * table rte's from the given rte list.
+ * Callers of this function are responsible for passing list pointers to be non-null
+ * and initially pointing to empty lists.
  */
-List *
-ExtractReferenceTableRTEList(List *rteList)
+void
+ExtractReferenceTableRTEList(List *rteList, List **referenceTableRTEList,
+							 List **coordinatorTableRTEList)
 {
-	List *referenceTableRTEList = NIL;
+	Assert(referenceTableRTEList != NULL && *referenceTableRTEList == NIL);
+	Assert(coordinatorTableRTEList != NULL && *coordinatorTableRTEList == NIL);
 
 	RangeTblEntry *rte = NULL;
 	foreach_ptr(rte, rteList)
@@ -340,14 +351,22 @@ ExtractReferenceTableRTEList(List *rteList)
 		}
 
 		Oid relationOid = rte->relid;
-		if (IsCitusTable(relationOid) && PartitionMethod(relationOid) ==
-			DISTRIBUTE_BY_NONE)
+
+		if (!IsCitusTable(relationOid))
 		{
-			referenceTableRTEList = lappend(referenceTableRTEList, rte);
+			continue;
+		}
+
+		char partititonMethod = PartitionMethod(relationOid);
+		if (partititonMethod == DISTRIBUTE_BY_NONE)
+		{
+			*referenceTableRTEList = lappend(*referenceTableRTEList, rte);
+		}
+		else if (partititonMethod == COORDINATOR_TABLE)
+		{
+			*coordinatorTableRTEList = lappend(*coordinatorTableRTEList, rte);
 		}
 	}
-
-	return referenceTableRTEList;
 }
 
 
@@ -2409,7 +2428,7 @@ IsLocalReferenceTableJoin(Query *parse, List *rangeTableList)
 	 * Check if we are in the coordinator and coordinator can have reference
 	 * table placements
 	 */
-	if (!CanUseCoordinatorLocalTablesWithReferenceTables())
+	if (!CanUseCoordinatorLocalTablesWithSingleShardTables())
 	{
 		return false;
 	}
@@ -2515,26 +2534,35 @@ QueryIsNotSimpleSelect(Node *node)
 
 
 /*
- * UpdateReferenceTablesWithShard recursively replaces the reference table names
- * in the given range table list with the local shard table names.
+ * UpdateSingleShardTablesWithShard recursively replaces the single shard table
+ * names in the given query with the shard table names.
  */
 static void
-UpdateReferenceTablesWithShard(List *rangeTableList)
+UpdateSingleShardTablesWithShard(Query *query, List *singleShardTableRTEList)
 {
-	List *referenceTableRTEList = ExtractReferenceTableRTEList(rangeTableList);
-
 	RangeTblEntry *rangeTableEntry = NULL;
-	foreach_ptr(rangeTableEntry, referenceTableRTEList)
+	foreach_ptr(rangeTableEntry, singleShardTableRTEList)
 	{
-		Oid referenceTableLocalShardOid = GetReferenceTableLocalShardOid(
+		Oid singleShardTableLocalShardOid = GetSingleShardTableLocalShardOid(
 			rangeTableEntry->relid);
 
-		rangeTableEntry->relid = referenceTableLocalShardOid;
+		rangeTableEntry->relid = singleShardTableLocalShardOid;
 
 		/*
 		 * Parser locks relations in addRangeTableEntry(). So we should lock the
 		 * modified ones too.
 		 */
-		LockRelationOid(referenceTableLocalShardOid, AccessShareLock);
+
+		LOCKMODE localShardLockMode;
+
+#if PG_VERSION_NUM >= PG_VERSION_12
+
+		/* we can infer the required lock mode from the rte itself if PostgreSQL ver. >= 12.x */
+		localShardLockMode = rangeTableEntry->rellockmode;
+#else
+		localShardLockMode = GetQueryLockMode(query);
+#endif
+
+		LockRelationOid(singleShardTableLocalShardOid, localShardLockMode);
 	}
 }

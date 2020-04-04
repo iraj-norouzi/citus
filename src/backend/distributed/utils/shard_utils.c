@@ -39,12 +39,12 @@ GetTableLocalShardOid(Oid citusTableOid, uint64 shardId)
 
 
 /*
- * GetReferenceTableLocalShardOid returns OID of the local shard of given
+ * GetSingleShardTableLocalShardOid returns OID of the local shard of given
  * reference table. Caller of this function must ensure that referenceTableOid
  * is owned by a reference table.
  */
 Oid
-GetReferenceTableLocalShardOid(Oid referenceTableOid)
+GetSingleShardTableLocalShardOid(Oid referenceTableOid)
 {
 	const CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(referenceTableOid);
 
