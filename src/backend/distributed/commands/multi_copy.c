@@ -2087,8 +2087,8 @@ CitusCopyDestReceiverStartup(DestReceiver *dest, int operation,
 
 	/* look up table properties */
 	Relation distributedRelation = heap_open(tableId, RowExclusiveLock);
-	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(tableId);
-	partitionMethod = cacheEntry->partitionMethod;
+	CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(tableId);
+	partitionMethod = cacheRef->cacheEntry->partitionMethod;
 
 	copyDest->distributedRelation = distributedRelation;
 	copyDest->tupleDescriptor = inputTupleDescriptor;
@@ -2117,7 +2117,7 @@ CitusCopyDestReceiverStartup(DestReceiver *dest, int operation,
 
 	/* error if any shard missing min/max values */
 	if (partitionMethod != DISTRIBUTE_BY_NONE &&
-		cacheEntry->hasUninitializedShardInterval)
+		cacheRef->cacheEntry->hasUninitializedShardInterval)
 	{
 		ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 						errmsg("could not start copy"),
@@ -2137,7 +2137,7 @@ CitusCopyDestReceiverStartup(DestReceiver *dest, int operation,
 
 	UseCoordinatedTransaction();
 
-	if (cacheEntry->replicationModel == REPLICATION_MODEL_2PC ||
+	if (cacheRef->cacheEntry->replicationModel == REPLICATION_MODEL_2PC ||
 		MultiShardCommitProtocol == COMMIT_PROTOCOL_2PC)
 	{
 		CoordinatedTransactionUse2PC();
@@ -2222,7 +2222,7 @@ CitusCopyDestReceiverStartup(DestReceiver *dest, int operation,
 	copyDest->shardStateHash = CreateShardStateHash(TopTransactionContext);
 	copyDest->connectionStateHash = CreateConnectionStateHash(TopTransactionContext);
 
-	ReleaseTableCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheRef);
 
 	RecordRelationAccessIfReferenceTable(tableId, PLACEMENT_ACCESS_DML);
 }
@@ -2481,10 +2481,11 @@ ShardIdForTuple(CitusCopyDestReceiver *copyDest, Datum *columnValues, bool *colu
 	 * For reference table, this function blindly returns the tables single
 	 * shard.
 	 */
-	CitusTableCacheEntry *cacheEntry =
+	CitusTableCacheEntryRef *cacheRef =
 		GetCitusTableCacheEntry(copyDest->distributedRelationId);
-	ShardInterval *shardInterval = FindShardInterval(partitionColumnValue, cacheEntry);
-	ReleaseTableCacheEntry(cacheEntry);
+	ShardInterval *shardInterval = FindShardInterval(partitionColumnValue,
+													 cacheRef->cacheEntry);
+	ReleaseTableCacheEntry(cacheRef);
 	if (shardInterval == NULL)
 	{
 		ereport(ERROR, (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),

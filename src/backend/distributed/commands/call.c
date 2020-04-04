@@ -99,13 +99,14 @@ CallFuncExprRemotely(CallStmt *callStmt, DistObjectCacheEntry *procedure,
 		return false;
 	}
 
-	CitusTableCacheEntry *distTable = GetCitusTableCacheEntry(colocatedRelationId);
-	Var *partitionColumn = distTable->partitionColumn;
+	CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(colocatedRelationId);
+	Var *partitionColumn = cacheRef->cacheEntry->partitionColumn;
 	if (partitionColumn == NULL)
 	{
 		/* This can happen if colocated with a reference table. Punt for now. */
 		ereport(DEBUG1, (errmsg(
 							 "cannot push down CALL for reference tables")));
+		ReleaseTableCacheEntry(cacheRef);
 		return false;
 	}
 
@@ -115,6 +116,7 @@ CallFuncExprRemotely(CallStmt *callStmt, DistObjectCacheEntry *procedure,
 	if (!IsA(partitionValueNode, Const))
 	{
 		ereport(DEBUG1, (errmsg("distribution argument value must be a constant")));
+		ReleaseTableCacheEntry(cacheRef);
 		return false;
 	}
 	Const *partitionValue = (Const *) partitionValueNode;
@@ -130,7 +132,9 @@ CallFuncExprRemotely(CallStmt *callStmt, DistObjectCacheEntry *procedure,
 		partitionValueDatum = CoerceColumnValue(partitionValueDatum, &coercionData);
 	}
 
-	ShardInterval *shardInterval = FindShardInterval(partitionValueDatum, distTable);
+	ShardInterval *shardInterval = FindShardInterval(partitionValueDatum,
+													 cacheRef->cacheEntry);
+	ReleaseTableCacheEntry(cacheRef);
 	if (shardInterval == NULL)
 	{
 		ereport(DEBUG1, (errmsg("cannot push down call, failed to find shard interval")));

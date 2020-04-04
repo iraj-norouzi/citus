@@ -361,11 +361,11 @@ SetLocktagForShardDistributionMetadata(int64 shardId, LOCKTAG *tag)
 {
 	ShardInterval *shardInterval = LoadShardInterval(shardId);
 	Oid citusTableId = shardInterval->relationId;
-	CitusTableCacheEntry *citusTable = GetCitusTableCacheEntry(citusTableId);
-	uint32 colocationId = citusTable->colocationId;
+	CitusTableCacheEntryRef *citusTableRef = GetCitusTableCacheEntry(citusTableId);
+	uint32 colocationId = citusTableRef->cacheEntry->colocationId;
 
 	if (colocationId == INVALID_COLOCATION_ID ||
-		citusTable->partitionMethod != DISTRIBUTE_BY_HASH)
+		citusTableRef->cacheEntry->partitionMethod != DISTRIBUTE_BY_HASH)
 	{
 		SET_LOCKTAG_SHARD_METADATA_RESOURCE(*tag, MyDatabaseId, shardId);
 	}
@@ -375,7 +375,7 @@ SetLocktagForShardDistributionMetadata(int64 shardId, LOCKTAG *tag)
 													   shardInterval->shardIndex);
 	}
 
-	ReleaseTableCacheEntry(citusTable);
+	ReleaseTableCacheEntry(citusTableRef);
 }
 
 
@@ -392,9 +392,9 @@ LockReferencedReferenceShardDistributionMetadata(uint64 shardId, LOCKMODE lockMo
 {
 	Oid relationId = RelationIdForShard(shardId);
 
-	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(relationId);
-	List *referencedRelationList = cacheEntry->referencedRelationsViaForeignKey;
-	ReleaseTableCacheEntry(cacheEntry);
+	CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(relationId);
+	List *referencedRelationList = cacheRef->cacheEntry->referencedRelationsViaForeignKey;
+	ReleaseTableCacheEntry(cacheRef);
 	List *shardIntervalList = GetSortedReferenceShardIntervals(referencedRelationList);
 
 	if (list_length(shardIntervalList) > 0 && ClusterHasKnownMetadataWorkers())
@@ -423,14 +423,14 @@ LockReferencedReferenceShardResources(uint64 shardId, LOCKMODE lockMode)
 {
 	Oid relationId = RelationIdForShard(shardId);
 
-	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(relationId);
+	CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(relationId);
 
 	/*
 	 * Note that referencedRelationsViaForeignKey contains transitively referenced
 	 * relations too.
 	 */
-	List *referencedRelationList = cacheEntry->referencedRelationsViaForeignKey;
-	ReleaseTableCacheEntry(cacheEntry);
+	List *referencedRelationList = cacheRef->cacheEntry->referencedRelationsViaForeignKey;
+	ReleaseTableCacheEntry(cacheRef);
 	List *referencedShardIntervalList =
 		GetSortedReferenceShardIntervals(referencedRelationList);
 

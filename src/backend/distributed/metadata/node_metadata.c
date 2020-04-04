@@ -840,9 +840,9 @@ get_shard_id_for_distribution_column(PG_FUNCTION_ARGS)
 		Datum distributionValueDatum = StringToDatum(distributionValueString,
 													 distributionDataType);
 
-		CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(relationId);
-		shardInterval = FindShardInterval(distributionValueDatum, cacheEntry);
-		ReleaseTableCacheEntry(cacheEntry);
+		CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(relationId);
+		shardInterval = FindShardInterval(distributionValueDatum, cacheRef->cacheEntry);
+		ReleaseTableCacheEntry(cacheRef);
 	}
 	else
 	{

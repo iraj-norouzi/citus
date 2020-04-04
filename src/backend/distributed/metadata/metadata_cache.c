@@ -75,36 +75,16 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
-
 /* user configuration */
 int ReadFromSecondaries = USE_SECONDARY_NODES_NEVER;
 
-
-/*
- * ShardCacheEntry represents an entry in the shardId -> ShardInterval cache.
- * To avoid duplicating data and invalidation logic between this cache and the
- * DistTableCache, this only points into the CitusTableCacheEntry of the
- * shard's distributed table.
- */
-typedef struct ShardCacheEntry
+typedef struct CitusTableCacheEntrySlot
 {
-	/* hash key, needs to be first */
-	int64 shardId;
+	/* lookup key - must be first. A pg_class.oid oid. */
+	Oid relationId;
 
-	/*
-	 * Cache entry for the distributed table a shard belongs to, possibly not
-	 * valid.
-	 */
-	CitusTableCacheEntry *tableEntry;
-
-	/*
-	 * Offset in tableEntry->sortedShardIntervalArray, only valid if
-	 * tableEntry->isValid.  We don't store pointers to the individual shard
-	 * placements because that'd make invalidation a bit more complicated, and
-	 * because there's simply no need.
-	 */
-	int shardIndex;
-} ShardCacheEntry;
+	CitusTableCacheEntryRef *ref;
+} CitusTableCacheEntrySlot;
 
 
 /*
@@ -169,7 +149,6 @@ static bool citusVersionKnownCompatible = false;
 static HTAB *DistTableCacheHash = NULL;
 
 /* Hash table for informations about each shard */
-static HTAB *DistShardCacheHash = NULL;
 static MemoryContext MetadataCacheMemoryContext = NULL;
 
 /* Hash table for information about each object */
@@ -191,9 +170,12 @@ static ScanKeyData DistObjectScanKey[3];
 
 /* local function forward declarations */
 static bool IsCitusTableViaCatalog(Oid relationId);
-static ShardCacheEntry * LookupShardCacheEntry(int64 shardId);
-static CitusTableCacheEntry * LookupCitusTableCacheEntry(Oid relationId);
-static void BuildCitusTableCacheEntry(CitusTableCacheEntry *cacheEntry);
+static CitusTableCacheEntryRef * LookupShardIndex(int64 shardId, int *shardIndex);
+static CitusTableCacheEntryRef * LookupCitusTableCacheEntry(Oid relationId);
+static CitusTableCacheEntryRef * InitCitusTableCacheEntryRef(MemoryContext memoryContext,
+															 CitusTableCacheEntry *
+															 cacheEntry);
+static CitusTableCacheEntry * InitCitusTableCacheEntry(Oid relationId);
 static void BuildCachedShardList(CitusTableCacheEntry *cacheEntry);
 static void PrepareWorkerNodeCache(void);
 static bool CheckInstalledVersion(int elevel);
@@ -215,6 +197,7 @@ static void InvalidateForeignRelationGraphCacheCallback(Datum argument, Oid rela
 static void InvalidateDistRelationCacheCallback(Datum argument, Oid relationId);
 static void InvalidateNodeRelationCacheCallback(Datum argument, Oid relationId);
 static void InvalidateLocalGroupIdRelationCacheCallback(Datum argument, Oid relationId);
+static void CitusTableCacheEntryRefDeletionCallback(void *arg);
 static HeapTuple LookupDistPartitionTuple(Relation pgDistPartition, Oid relationId);
 static List * LookupDistShardTuples(Oid relationId);
 static void GetPartitionTypeInputInfo(char *partitionKeyString, char partitionMethod,
@@ -228,7 +211,9 @@ static void CachedRelationLookup(const char *relationName, Oid *cachedOid);
 static void CachedRelationNamespaceLookup(const char *relationName, Oid relnamespace,
 										  Oid *cachedOid);
 static ShardPlacement * ResolveGroupShardPlacement(
-	GroupShardPlacement *groupShardPlacement, ShardCacheEntry *shardEntry);
+	GroupShardPlacement *groupShardPlacement,
+	CitusTableCacheEntry *tableEntry, int
+	shardIndex);
 static Oid LookupEnumValueId(Oid typeId, char *valueName);
 static void InvalidateDistTableCache(void);
 static void InvalidateDistObjectCache(void);
@@ -273,45 +258,52 @@ EnsureModificationsCanRun(void)
  * This only asserts correctness, without asserts this is a nop.
  */
 void
-ReleaseTableCacheEntry(CitusTableCacheEntry *cacheEntry)
+ReleaseTableCacheEntry(CitusTableCacheEntryRef *ref)
 {
-	Assert(cacheEntry->isLive);
-	cacheEntry->isLive = false;
+	CitusTableCacheEntry *cacheEntry = ref->cacheEntry;
+	if (cacheEntry)
+	{
+		ref->cacheEntry = NULL;
+
+		Assert(cacheEntry->refCount > 0);
+		cacheEntry->refCount--;
+		if (cacheEntry->refCount == 0)
+		{
+			ResetCitusTableCacheEntry(cacheEntry);
+			pfree(cacheEntry);
+		}
+	}
 }
 
 
 /*
- * ReleaseObjectCacheEntry releases a pointer loaned out by cache.
- * This only asserts correctness, without asserts this is a nop.
+ * ReleaseObjectCacheEntry releases a DistObjectCacheEntry loaned out by cache.
+ * Currently does nothing.
  */
 void
 ReleaseObjectCacheEntry(DistObjectCacheEntry *cacheEntry)
-{
-	Assert(cacheEntry->isLive);
-	cacheEntry->isLive = false;
-}
+{ }
 
 
 /*
- * IsCitusTable returns whether relationId is a distributed relation or
- * not.
+ * IsCitusTable returns whether relationId is a distributed relation.
  */
 bool
 IsCitusTable(Oid relationId)
 {
-	CitusTableCacheEntry *cacheEntry = LookupCitusTableCacheEntry(relationId);
+	CitusTableCacheEntryRef *ref = LookupCitusTableCacheEntry(relationId);
 
 	/*
-	 * If extension hasn't been created, or has the wrong version and the
-	 * table isn't a distributed one, LookupCitusTableCacheEntry() will return NULL.
+	 * If extension hasn't been created, or has the wrong version and the table
+	 * isn't a distributed one, LookupCitusTableCacheEntryData() will return NULL.
 	 */
-	if (!cacheEntry)
+	if (!ref)
 	{
 		return false;
 	}
 
-	bool isCitusTable = cacheEntry->isCitusTable;
-	ReleaseTableCacheEntry(cacheEntry);
+	bool isCitusTable = ref->cacheEntry->isCitusTable;
+	ReleaseTableCacheEntry(ref);
 	return isCitusTable;
 }
 
@@ -369,10 +361,10 @@ CitusTableList(void)
 	Oid relationId = InvalidOid;
 	foreach_oid(relationId, distTableOidList)
 	{
-		CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(relationId);
-		Assert(cacheEntry->isCitusTable);
+		CitusTableCacheEntryRef *ref = GetCitusTableCacheEntry(relationId);
+		Assert(ref->cacheEntry->isCitusTable);
 
-		distributedTableList = lappend(distributedTableList, cacheEntry);
+		distributedTableList = lappend(distributedTableList, ref);
 	}
 
 	return distributedTableList;
@@ -388,21 +380,20 @@ CitusTableList(void)
 ShardInterval *
 LoadShardInterval(uint64 shardId)
 {
-	ShardCacheEntry *shardEntry = LookupShardCacheEntry(shardId);
-
-	CitusTableCacheEntry *tableEntry = shardEntry->tableEntry;
+	int shardIndex = 0;
+	CitusTableCacheEntryRef *tableRef = LookupShardIndex(shardId, &shardIndex);
+	CitusTableCacheEntry *tableEntry = tableRef->cacheEntry;
 
 	Assert(tableEntry->isCitusTable);
 
-	/* the offset better be in a valid range */
-	Assert(shardEntry->shardIndex < tableEntry->shardIntervalArrayLength);
-
 	ShardInterval *sourceShardInterval =
-		tableEntry->sortedShardIntervalArray[shardEntry->shardIndex];
+		tableEntry->sortedShardIntervalArray[shardIndex];
 
 	/* copy value to return */
 	ShardInterval *shardInterval = (ShardInterval *) palloc0(sizeof(ShardInterval));
 	CopyShardInterval(sourceShardInterval, shardInterval);
+
+	ReleaseTableCacheEntry(tableRef);
 
 	return shardInterval;
 }
@@ -415,13 +406,7 @@ LoadShardInterval(uint64 shardId)
 Oid
 RelationIdForShard(uint64 shardId)
 {
-	ShardCacheEntry *shardEntry = LookupShardCacheEntry(shardId);
-
-	CitusTableCacheEntry *tableEntry = shardEntry->tableEntry;
-
-	Assert(tableEntry->isCitusTable);
-
-	return tableEntry->relationId;
+	return LookupShardRelation(shardId, false);
 }
 
 
@@ -432,10 +417,12 @@ RelationIdForShard(uint64 shardId)
 bool
 ReferenceTableShardId(uint64 shardId)
 {
-	ShardCacheEntry *shardEntry = LookupShardCacheEntry(shardId);
-	CitusTableCacheEntry *tableEntry = shardEntry->tableEntry;
+	Oid relationId = LookupShardRelation(shardId, false);
+	CitusTableCacheEntryRef *tableRef = GetCitusTableCacheEntry(relationId);
+	char partitionMethod = tableRef->cacheEntry->partitionMethod;
+	ReleaseTableCacheEntry(tableRef);
 
-	return (tableEntry->partitionMethod == DISTRIBUTE_BY_NONE);
+	return partitionMethod == DISTRIBUTE_BY_NONE;
 }
 
 
@@ -448,16 +435,16 @@ ReferenceTableShardId(uint64 shardId)
 GroupShardPlacement *
 LoadGroupShardPlacement(uint64 shardId, uint64 placementId)
 {
-	ShardCacheEntry *shardEntry = LookupShardCacheEntry(shardId);
-	CitusTableCacheEntry *tableEntry = shardEntry->tableEntry;
+	int shardIndex = 0;
+	CitusTableCacheEntryRef *tableRef = LookupShardIndex(shardId, &shardIndex);
 
 	/* the offset better be in a valid range */
-	Assert(shardEntry->shardIndex < tableEntry->shardIntervalArrayLength);
+	Assert(shardIndex < tableRef->cacheEntry->shardIntervalArrayLength);
 
 	GroupShardPlacement *placementArray =
-		tableEntry->arrayOfPlacementArrays[shardEntry->shardIndex];
+		tableRef->cacheEntry->arrayOfPlacementArrays[shardIndex];
 	int numberOfPlacements =
-		tableEntry->arrayOfPlacementArrayLengths[shardEntry->shardIndex];
+		tableRef->cacheEntry->arrayOfPlacementArrayLengths[shardIndex];
 
 	for (int i = 0; i < numberOfPlacements; i++)
 	{
@@ -466,7 +453,7 @@ LoadGroupShardPlacement(uint64 shardId, uint64 placementId)
 			GroupShardPlacement *shardPlacement = CitusMakeNode(GroupShardPlacement);
 
 			*shardPlacement = placementArray[i];
-
+			ReleaseTableCacheEntry(tableRef);
 			return shardPlacement;
 		}
 	}
@@ -482,10 +469,13 @@ LoadGroupShardPlacement(uint64 shardId, uint64 placementId)
 ShardPlacement *
 LoadShardPlacement(uint64 shardId, uint64 placementId)
 {
-	ShardCacheEntry *shardEntry = LookupShardCacheEntry(shardId);
+	int shardIndex = 0;
+	CitusTableCacheEntryRef *tableRef = LookupShardIndex(shardId, &shardIndex);
 	GroupShardPlacement *groupPlacement = LoadGroupShardPlacement(shardId, placementId);
 	ShardPlacement *nodePlacement = ResolveGroupShardPlacement(groupPlacement,
-															   shardEntry);
+															   tableRef->cacheEntry,
+															   shardIndex);
+	ReleaseTableCacheEntry(tableRef);
 
 	return nodePlacement;
 }
@@ -501,12 +491,12 @@ FindShardPlacementOnGroup(int32 groupId, uint64 shardId)
 {
 	ShardPlacement *placementOnNode = NULL;
 
-	ShardCacheEntry *shardEntry = LookupShardCacheEntry(shardId);
-	CitusTableCacheEntry *tableEntry = shardEntry->tableEntry;
+	int shardIndex = 0;
+	CitusTableCacheEntryRef *tableRef = LookupShardIndex(shardId, &shardIndex);
 	GroupShardPlacement *placementArray =
-		tableEntry->arrayOfPlacementArrays[shardEntry->shardIndex];
+		tableRef->cacheEntry->arrayOfPlacementArrays[shardIndex];
 	int numberOfPlacements =
-		tableEntry->arrayOfPlacementArrayLengths[shardEntry->shardIndex];
+		tableRef->cacheEntry->arrayOfPlacementArrayLengths[shardIndex];
 
 	for (int placementIndex = 0; placementIndex < numberOfPlacements; placementIndex++)
 	{
@@ -514,11 +504,13 @@ FindShardPlacementOnGroup(int32 groupId, uint64 shardId)
 
 		if (placement->groupId == groupId)
 		{
-			placementOnNode = ResolveGroupShardPlacement(placement, shardEntry);
+			placementOnNode = ResolveGroupShardPlacement(placement, tableRef->cacheEntry,
+														 shardIndex);
 			break;
 		}
 	}
 
+	ReleaseTableCacheEntry(tableRef);
 	return placementOnNode;
 }
 
@@ -529,10 +521,9 @@ FindShardPlacementOnGroup(int32 groupId, uint64 shardId)
  */
 static ShardPlacement *
 ResolveGroupShardPlacement(GroupShardPlacement *groupShardPlacement,
-						   ShardCacheEntry *shardEntry)
+						   CitusTableCacheEntry *tableEntry,
+						   int shardIndex)
 {
-	CitusTableCacheEntry *tableEntry = shardEntry->tableEntry;
-	int shardIndex = shardEntry->shardIndex;
 	ShardInterval *shardInterval = tableEntry->sortedShardIntervalArray[shardIndex];
 
 	ShardPlacement *shardPlacement = CitusMakeNode(ShardPlacement);
@@ -688,22 +679,23 @@ ShardPlacementList(uint64 shardId)
 {
 	List *placementList = NIL;
 
-	ShardCacheEntry *shardEntry = LookupShardCacheEntry(shardId);
-	CitusTableCacheEntry *tableEntry = shardEntry->tableEntry;
+	int shardIndex = 0;
+	CitusTableCacheEntryRef *tableRef = LookupShardIndex(shardId, &shardIndex);
 
 	/* the offset better be in a valid range */
-	Assert(shardEntry->shardIndex < tableEntry->shardIntervalArrayLength);
+	Assert(shardIndex < tableRef->cacheEntry->shardIntervalArrayLength);
 
 	GroupShardPlacement *placementArray =
-		tableEntry->arrayOfPlacementArrays[shardEntry->shardIndex];
+		tableRef->cacheEntry->arrayOfPlacementArrays[shardIndex];
 	int numberOfPlacements =
-		tableEntry->arrayOfPlacementArrayLengths[shardEntry->shardIndex];
+		tableRef->cacheEntry->arrayOfPlacementArrayLengths[shardIndex];
 
 	for (int i = 0; i < numberOfPlacements; i++)
 	{
 		GroupShardPlacement *groupShardPlacement = &placementArray[i];
 		ShardPlacement *shardPlacement = ResolveGroupShardPlacement(groupShardPlacement,
-																	shardEntry);
+																	tableRef->cacheEntry,
+																	shardIndex);
 
 		placementList = lappend(placementList, shardPlacement);
 	}
@@ -720,82 +712,33 @@ ShardPlacementList(uint64 shardId)
 
 
 /*
- * LookupShardCacheEntry returns the cache entry belonging to a shard, or
- * errors out if that shard is unknown.
+ * LookupShardIndex returns the cache entry belonging to a shard, or
+ * errors out if that shard is unknown. shardIndex is set to the index
+ * for the shardId in sortedShardIntervalArray.
  */
-static ShardCacheEntry *
-LookupShardCacheEntry(int64 shardId)
+static CitusTableCacheEntryRef *
+LookupShardIndex(int64 shardId, int *shardIndex)
 {
-	bool foundInCache = false;
-	bool recheck = false;
-
 	Assert(CitusHasBeenLoaded() && CheckCitusVersion(WARNING));
 
 	InitializeCaches();
 
-	/* lookup cache entry */
-	ShardCacheEntry *shardEntry = hash_search(DistShardCacheHash, &shardId, HASH_FIND,
-											  &foundInCache);
+	Oid relationId = LookupShardRelation(shardId, false);
+	CitusTableCacheEntryRef *tableRef = GetCitusTableCacheEntry(relationId);
+	CitusTableCacheEntry *tableEntry = tableRef->cacheEntry;
 
-	if (!foundInCache)
+	for (int index = 0; index < tableEntry->shardIntervalArrayLength; index++)
 	{
-		/*
-		 * A possible reason for not finding an entry in the cache is that the
-		 * distributed table's cache entry hasn't been accessed. Thus look up
-		 * the distributed table, and build the cache entry.  Afterwards we
-		 * know that the shard has to be in the cache if it exists.  If the
-		 * shard does *not* exist LookupShardRelation() will error out.
-		 */
-		Oid relationId = LookupShardRelation(shardId, false);
-
-		/* trigger building the cache for the shard id */
-		ReleaseTableCacheEntry(LookupCitusTableCacheEntry(relationId));
-
-		recheck = true;
-	}
-	else
-	{
-		/*
-		 * We might have some concurrent metadata changes. In order to get the changes,
-		 * we first need to accept the cache invalidation messages.
-		 */
-		AcceptInvalidationMessages();
-
-		if (true || !shardEntry->tableEntry->isValid)
+		if (tableEntry->sortedShardIntervalArray[index]->shardId == shardId)
 		{
-			Oid oldRelationId = shardEntry->tableEntry->relationId;
-			Oid currentRelationId = LookupShardRelation(shardId, false);
-
-			/*
-			 * The relation OID to which the shard belongs could have changed,
-			 * most notably when the extension is dropped and a shard ID is
-			 * reused. Reload the cache entries for both old and new relation
-			 * ID and then look up the shard entry again.
-			 */
-			ReleaseTableCacheEntry(LookupCitusTableCacheEntry(oldRelationId));
-			ReleaseTableCacheEntry(LookupCitusTableCacheEntry(currentRelationId));
-
-			recheck = true;
+			*shardIndex = index;
+			return tableRef;
 		}
 	}
 
-	/*
-	 * If we (re-)loaded the table cache, re-search the shard cache - the
-	 * shard index might have changed.  If we still can't find the entry, it
-	 * can't exist.
-	 */
-	if (recheck)
-	{
-		shardEntry = hash_search(DistShardCacheHash, &shardId, HASH_FIND, &foundInCache);
-
-		if (!foundInCache)
-		{
-			ereport(ERROR, (errmsg("could not find valid entry for shard "
-								   UINT64_FORMAT, shardId)));
-		}
-	}
-
-	return shardEntry;
+	ereport(ERROR, (errmsg("could not find valid entry for shard "
+						   UINT64_FORMAT " in table %d", shardId, relationId)));
+	return NULL;
 }
 
 
@@ -805,15 +748,15 @@ LookupShardCacheEntry(int64 shardId)
  *
  * Errors out if no relation matching the criteria could be found.
  */
-CitusTableCacheEntry *
+CitusTableCacheEntryRef *
 GetCitusTableCacheEntry(Oid distributedRelationId)
 {
-	CitusTableCacheEntry *cacheEntry =
+	CitusTableCacheEntryRef *ref =
 		LookupCitusTableCacheEntry(distributedRelationId);
 
-	if (cacheEntry && cacheEntry->isCitusTable)
+	if (ref != NULL && ref->cacheEntry->isCitusTable)
 	{
-		return cacheEntry;
+		return ref;
 	}
 	else
 	{
@@ -833,10 +776,10 @@ GetCitusTableCacheEntry(Oid distributedRelationId)
 
 
 /*
- * GetCitusTableCacheEntry returns the distributed table metadata for the
+ * LookupCitusTableCacheEntry returns the distributed table metadata for the
  * passed relationId. For efficiency it caches lookups.
  */
-static CitusTableCacheEntry *
+static CitusTableCacheEntryRef *
 LookupCitusTableCacheEntry(Oid relationId)
 {
 	bool foundInCache = false;
@@ -881,33 +824,26 @@ LookupCitusTableCacheEntry(Oid relationId)
 		}
 	}
 
-	CitusTableCacheEntry *cacheEntry = hash_search(DistTableCacheHash, hashKey,
-												   HASH_ENTER,
-												   &foundInCache);
+	/*
+	 * We might have some concurrent metadata changes. In order to get the changes,
+	 * we first need to accept the cache invalidation messages.
+	 */
+	AcceptInvalidationMessages();
+	CitusTableCacheEntrySlot *cacheSlot = hash_search(DistTableCacheHash, hashKey,
+													  HASH_ENTER,
+													  &foundInCache);
 
 	/* return valid matches */
 	if (foundInCache)
 	{
-		Assert(!cacheEntry->isLive);
-
-		/*
-		 * We might have some concurrent metadata changes. In order to get the changes,
-		 * we first need to accept the cache invalidation messages.
-		 */
-		AcceptInvalidationMessages();
-
-		if (false && cacheEntry->isValid)
-		{
-			return cacheEntry;
-		}
-
-		/* free the content of old, invalid, entries */
-		ResetCitusTableCacheEntry(cacheEntry);
+		Assert(cacheSlot->ref->cacheEntry);
+		return InitCitusTableCacheEntryRef(CurrentMemoryContext,
+										   cacheSlot->ref->cacheEntry);
 	}
 
 	/* zero out entry, but not the key part */
-	memset(((char *) cacheEntry) + sizeof(Oid), 0,
-		   sizeof(CitusTableCacheEntry) - sizeof(Oid));
+	memset(((char *) cacheSlot) + sizeof(Oid), 0,
+		   sizeof(CitusTableCacheEntrySlot) - sizeof(Oid));
 
 	/*
 	 * We disable interrupts while creating the cache entry because loading
@@ -918,15 +854,13 @@ LookupCitusTableCacheEntry(Oid relationId)
 	HOLD_INTERRUPTS();
 
 	/* actually fill out entry */
-	BuildCitusTableCacheEntry(cacheEntry);
+	CitusTableCacheEntry *cacheEntry = InitCitusTableCacheEntry(relationId);
 
-	/* and finally mark as valid */
-	cacheEntry->isValid = true;
-	cacheEntry->isLive = true;
+	cacheSlot->ref = InitCitusTableCacheEntryRef(MetadataCacheMemoryContext, cacheEntry);
 
 	RESUME_INTERRUPTS();
 
-	return cacheEntry;
+	return InitCitusTableCacheEntryRef(CurrentMemoryContext, cacheEntry);
 }
 
 
@@ -964,15 +898,13 @@ LookupDistObjectCacheEntry(Oid classid, Oid objid, int32 objsubid)
 	/* return valid matches */
 	if (foundInCache)
 	{
-		Assert(!cacheEntry->isLive);
-
 		/*
 		 * We might have some concurrent metadata changes. In order to get the changes,
 		 * we first need to accept the cache invalidation messages.
 		 */
 		AcceptInvalidationMessages();
 
-		if (false && cacheEntry->isValid)
+		if (cacheEntry->isValid)
 		{
 			return cacheEntry;
 		}
@@ -1013,7 +945,6 @@ LookupDistObjectCacheEntry(Oid classid, Oid objid, int32 objsubid)
 						  isNullArray);
 
 		cacheEntry->isValid = true;
-		cacheEntry->isLive = true;
 		cacheEntry->isDistributed = true;
 
 		cacheEntry->distributionArgIndex =
@@ -1025,7 +956,6 @@ LookupDistObjectCacheEntry(Oid classid, Oid objid, int32 objsubid)
 	else
 	{
 		cacheEntry->isValid = true;
-		cacheEntry->isLive = true;
 		cacheEntry->isDistributed = false;
 	}
 
@@ -1037,12 +967,37 @@ LookupDistObjectCacheEntry(Oid classid, Oid objid, int32 objsubid)
 
 
 /*
- * BuildCitusTableCacheEntry is a helper routine for
+ * InitCitusTableCacheEntryRef creates a new reference to a cache entry.
+ * This reference will be automatically freed with the supplied MemoryContext.
+ */
+static CitusTableCacheEntryRef *
+InitCitusTableCacheEntryRef(MemoryContext memoryContext,
+							CitusTableCacheEntry *cacheEntry)
+{
+	cacheEntry->refCount++;
+
+	CitusTableCacheEntryRef *ref =
+		MemoryContextAllocZero(memoryContext, sizeof(CitusTableCacheEntryRef));
+	ref->cacheEntry = cacheEntry;
+	ref->refcallback.func = CitusTableCacheEntryRefDeletionCallback;
+	ref->refcallback.arg = ref;
+	MemoryContextRegisterResetCallback(memoryContext, &ref->refcallback);
+
+	return ref;
+}
+
+
+/*
+ * InitCitusTableCacheEntry is a helper routine for
  * LookupCitusTableCacheEntry() for building the cache contents.
  */
-static void
-BuildCitusTableCacheEntry(CitusTableCacheEntry *cacheEntry)
+static CitusTableCacheEntry *
+InitCitusTableCacheEntry(Oid relationId)
 {
+	CitusTableCacheEntry *cacheEntry =
+		MemoryContextAllocZero(MetadataCacheMemoryContext, sizeof(CitusTableCacheEntry));
+	cacheEntry->relationId = relationId;
+
 	MemoryContext oldContext = NULL;
 	Datum datumArray[Natts_pg_dist_partition];
 	bool isNullArray[Natts_pg_dist_partition];
@@ -1056,7 +1011,7 @@ BuildCitusTableCacheEntry(CitusTableCacheEntry *cacheEntry)
 	{
 		cacheEntry->isCitusTable = false;
 		heap_close(pgDistPartition, NoLock);
-		return;
+		return cacheEntry;
 	}
 
 	cacheEntry->isCitusTable = true;
@@ -1149,6 +1104,8 @@ BuildCitusTableCacheEntry(CitusTableCacheEntry *cacheEntry)
 	MemoryContextSwitchTo(oldContext);
 
 	heap_close(pgDistPartition, NoLock);
+
+	return cacheEntry;
 }
 
 
@@ -1218,25 +1175,6 @@ BuildCachedShardList(CitusTableCacheEntry *cacheEntry)
 		}
 
 		heap_close(distShardRelation, AccessShareLock);
-
-		ShardInterval *firstShardInterval = shardIntervalArray[0];
-		bool foundInCache = false;
-		ShardCacheEntry *shardEntry = hash_search(DistShardCacheHash,
-												  &firstShardInterval->shardId, HASH_FIND,
-												  &foundInCache);
-		if (foundInCache && shardEntry->tableEntry != cacheEntry)
-		{
-			/*
-			 * Normally, all shard cache entries for a given DistTableEntry are removed
-			 * before we get here. There is one exception: When a shard changes from
-			 * one relation ID to another. That typically happens during metadata
-			 * syncing when the distributed table is dropped and re-created without
-			 * changing the shard IDs. That means that old relation no longer exists
-			 * and we can safely wipe its entry, which will remove all corresponding
-			 * shard cache entries.
-			 */
-			ResetCitusTableCacheEntry(shardEntry->tableEntry);
-		}
 	}
 
 	/* look up value comparison function */
@@ -1321,11 +1259,6 @@ BuildCachedShardList(CitusTableCacheEntry *cacheEntry)
 		ErrorIfInconsistentShardIntervals(cacheEntry);
 	}
 
-	/*
-	 * We set these here, so ResetCitusTableCacheEntry() can see what has been
-	 * entered into DistShardCacheHash even if the following loop is interrupted
-	 * by throwing errors, etc.
-	 */
 	cacheEntry->sortedShardIntervalArray = sortedShardIntervalArray;
 	cacheEntry->shardIntervalArrayLength = 0;
 
@@ -1333,19 +1266,7 @@ BuildCachedShardList(CitusTableCacheEntry *cacheEntry)
 	for (int shardIndex = 0; shardIndex < shardIntervalArrayLength; shardIndex++)
 	{
 		ShardInterval *shardInterval = sortedShardIntervalArray[shardIndex];
-		bool foundInCache = false;
 		int placementOffset = 0;
-
-		ShardCacheEntry *shardEntry = hash_search(DistShardCacheHash,
-												  &shardInterval->shardId, HASH_ENTER,
-												  &foundInCache);
-		if (foundInCache)
-		{
-			ereport(ERROR, (errmsg("cached metadata for shard " UINT64_FORMAT
-								   " is inconsistent",
-								   shardInterval->shardId),
-							errhint("Reconnect and try again.")));
-		}
 
 		/*
 		 * We should increment this only after we are sure this hasn't already
@@ -1353,9 +1274,6 @@ BuildCachedShardList(CitusTableCacheEntry *cacheEntry)
 		 * depends on this.
 		 */
 		cacheEntry->shardIntervalArrayLength++;
-
-		shardEntry->shardIndex = shardIndex;
-		shardEntry->tableEntry = cacheEntry;
 
 		/* build list of shard placements */
 		List *placementList = BuildShardPlacementList(shardInterval);
@@ -2737,8 +2655,7 @@ master_dist_placement_cache_invalidate(PG_FUNCTION_ARGS)
 	 * Invalidate relcache for the relevant relation(s). In theory shardId
 	 * should never change, but it doesn't hurt to be paranoid.
 	 */
-	if (oldShardId != InvalidOid &&
-		oldShardId != newShardId)
+	if (oldShardId != InvalidOid && oldShardId != newShardId)
 	{
 		CitusInvalidateRelcacheByShardId(oldShardId);
 	}
@@ -2906,7 +2823,6 @@ InitializeCaches(void)
 
 			MetadataCacheMemoryContext = NULL;
 			DistTableCacheHash = NULL;
-			DistShardCacheHash = NULL;
 
 			PG_RE_THROW();
 		}
@@ -2919,8 +2835,6 @@ InitializeCaches(void)
 static void
 InitializeDistCache(void)
 {
-	HASHCTL info;
-
 	/* build initial scan keys, copied for every relation scan */
 	memset(&DistPartitionScanKey, 0, sizeof(DistPartitionScanKey));
 
@@ -2945,16 +2859,6 @@ InitializeDistCache(void)
 	CreateDistTableCache();
 
 	InitializeDistObjectCache();
-
-	/* initialize the per-shard hash table */
-	MemSet(&info, 0, sizeof(info));
-	info.keysize = sizeof(int64);
-	info.entrysize = sizeof(ShardCacheEntry);
-	info.hash = tag_hash;
-	info.hcxt = MetadataCacheMemoryContext;
-	DistShardCacheHash =
-		hash_create("Shard Cache", 32 * 64, &info,
-					HASH_ELEM | HASH_FUNCTION | HASH_CONTEXT);
 
 	/* Watch for invalidation events. */
 	CacheRegisterRelcacheCallback(InvalidateDistRelationCacheCallback,
@@ -3304,18 +3208,12 @@ ResetCitusTableCacheEntry(CitusTableCacheEntry *cacheEntry)
 		GroupShardPlacement *placementArray =
 			cacheEntry->arrayOfPlacementArrays[shardIndex];
 		bool valueByVal = shardInterval->valueByVal;
-		bool foundInCache = false;
 
 		/* delete the shard's placements */
 		if (placementArray != NULL)
 		{
 			pfree(placementArray);
 		}
-
-		/* delete per-shard cache-entry */
-		hash_search(DistShardCacheHash, &shardInterval->shardId, HASH_REMOVE,
-					&foundInCache);
-		Assert(foundInCache);
 
 		/* delete data pointed to by ShardInterval */
 		if (!valueByVal)
@@ -3392,7 +3290,7 @@ InvalidateForeignRelationGraphCacheCallback(Datum argument, Oid relationId)
  * key graph cache, we use pg_dist_colocation, which is never invalidated for
  * other purposes.
  *
- * We acknowledge that it is not a very intiutive way of implementing this cache
+ * We acknowledge that it is not a very intuitive way of implementing this cache
  * invalidation, but, seems acceptable for now. If this becomes problematic, we
  * could try using a magic oid where we're sure that no relation would ever use
  * that oid.
@@ -3425,12 +3323,11 @@ InvalidateDistRelationCacheCallback(Datum argument, Oid relationId)
 		void *hashKey = (void *) &relationId;
 		bool foundInCache = false;
 
-
-		CitusTableCacheEntry *cacheEntry = hash_search(DistTableCacheHash, hashKey,
-													   HASH_FIND, &foundInCache);
+		CitusTableCacheEntrySlot *cacheSlot = hash_search(DistTableCacheHash, hashKey,
+														  HASH_REMOVE, &foundInCache);
 		if (foundInCache)
 		{
-			cacheEntry->isValid = false;
+			ReleaseTableCacheEntry(cacheSlot->ref);
 		}
 
 		/*
@@ -3452,19 +3349,25 @@ InvalidateDistRelationCacheCallback(Datum argument, Oid relationId)
 
 
 /*
- * InvalidateDistTableCache marks all DistTableCacheHash entries invalid.
+ * InvalidateDistTableCache clears DistTableCacheHash.
  */
 static void
 InvalidateDistTableCache(void)
 {
-	CitusTableCacheEntry *cacheEntry = NULL;
+	CitusTableCacheEntrySlot *cacheSlot = NULL;
 	HASH_SEQ_STATUS status;
 
 	hash_seq_init(&status, DistTableCacheHash);
 
-	while ((cacheEntry = (CitusTableCacheEntry *) hash_seq_search(&status)) != NULL)
+	while ((cacheSlot = (CitusTableCacheEntrySlot *) hash_seq_search(&status)) != NULL)
 	{
-		cacheEntry->isValid = false;
+		bool foundInCache = false;
+		CitusTableCacheEntrySlot *removedSlot PG_USED_FOR_ASSERTS_ONLY =
+			hash_search(DistTableCacheHash, &cacheSlot, HASH_REMOVE, &foundInCache);
+
+		Assert(foundInCache);
+		Assert(removedSlot == cacheSlot);
+		ReleaseTableCacheEntry(cacheSlot->ref);
 	}
 }
 
@@ -3494,14 +3397,16 @@ InvalidateDistObjectCache(void)
 void
 FlushDistTableCache(void)
 {
-	CitusTableCacheEntry *cacheEntry = NULL;
+	CitusTableCacheEntrySlot *cacheSlot = NULL;
 	HASH_SEQ_STATUS status;
 
 	hash_seq_init(&status, DistTableCacheHash);
 
-	while ((cacheEntry = (CitusTableCacheEntry *) hash_seq_search(&status)) != NULL)
+	while ((cacheSlot = (CitusTableCacheEntrySlot *) hash_seq_search(&status)) != NULL)
 	{
-		ResetCitusTableCacheEntry(cacheEntry);
+		CitusTableCacheEntryRef *ref = cacheSlot->ref;
+		cacheSlot->ref = NULL;
+		ReleaseTableCacheEntry(ref);
 	}
 
 	hash_destroy(DistTableCacheHash);
@@ -3516,7 +3421,7 @@ CreateDistTableCache(void)
 	HASHCTL info;
 	MemSet(&info, 0, sizeof(info));
 	info.keysize = sizeof(Oid);
-	info.entrysize = sizeof(CitusTableCacheEntry);
+	info.entrysize = sizeof(CitusTableCacheEntrySlot);
 	info.hash = tag_hash;
 	info.hcxt = MetadataCacheMemoryContext;
 	DistTableCacheHash =
@@ -3623,6 +3528,18 @@ InvalidateLocalGroupIdRelationCacheCallback(Datum argument, Oid relationId)
 	{
 		LocalGroupId = -1;
 	}
+}
+
+
+/*
+ * CitusTableCacheEntryRefDeletionCallback handles when the reference's
+ * MemoryContext is reset/deleted.
+ */
+static void
+CitusTableCacheEntryRefDeletionCallback(void *arg)
+{
+	CitusTableCacheEntryRef *ref = arg;
+	ReleaseTableCacheEntry(ref);
 }
 
 

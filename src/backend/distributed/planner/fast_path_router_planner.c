@@ -204,23 +204,21 @@ FastPathRouterQuery(Query *query, Node **distributionKeyValue)
 
 	/* we don't want to deal with append/range distributed tables */
 	Oid distributedTableId = rangeTableEntry->relid;
-	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(distributedTableId);
-	if (!(cacheEntry->partitionMethod == DISTRIBUTE_BY_HASH ||
-		  cacheEntry->partitionMethod == DISTRIBUTE_BY_NONE))
+	CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(distributedTableId);
+	char partitionMethod = cacheRef->cacheEntry->partitionMethod;
+	ReleaseTableCacheEntry(cacheRef);
+
+	if (partitionMethod != DISTRIBUTE_BY_HASH && partitionMethod != DISTRIBUTE_BY_NONE)
 	{
-		ReleaseTableCacheEntry(cacheEntry);
 		return false;
 	}
 
 	/* WHERE clause should not be empty for distributed tables */
 	if (joinTree == NULL ||
-		(cacheEntry->partitionMethod != DISTRIBUTE_BY_NONE && joinTree->quals == NULL))
+		(partitionMethod != DISTRIBUTE_BY_NONE && joinTree->quals == NULL))
 	{
-		ReleaseTableCacheEntry(cacheEntry);
 		return false;
 	}
-
-	ReleaseTableCacheEntry(cacheEntry);
 
 	/* if that's a reference table, we don't need to check anything further */
 	Var *distributionKey = PartitionColumn(distributedTableId, 1);

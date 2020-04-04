@@ -239,8 +239,8 @@ ShardIndex(ShardInterval *shardInterval)
 	Oid distributedTableId = shardInterval->relationId;
 	Datum shardMinValue = shardInterval->minValue;
 
-	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(distributedTableId);
-	char partitionMethod = cacheEntry->partitionMethod;
+	CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(distributedTableId);
+	char partitionMethod = cacheRef->cacheEntry->partitionMethod;
 
 	/*
 	 * Note that, we can also support append and range distributed tables, but
@@ -259,13 +259,13 @@ ShardIndex(ShardInterval *shardInterval)
 		/* reference tables has only a single shard, so the index is fixed to 0 */
 		shardIndex = 0;
 
-		ReleaseTableCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheRef);
 		return shardIndex;
 	}
 
-	shardIndex = FindShardIntervalIndex(shardMinValue, cacheEntry);
+	shardIndex = FindShardIntervalIndex(shardMinValue, cacheRef->cacheEntry);
 
-	ReleaseTableCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheRef);
 	return shardIndex;
 }
 

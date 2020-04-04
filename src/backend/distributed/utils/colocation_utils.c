@@ -629,13 +629,13 @@ GetNextColocationId()
 void
 CheckReplicationModel(Oid sourceRelationId, Oid targetRelationId)
 {
-	CitusTableCacheEntry *sourceTableEntry = GetCitusTableCacheEntry(sourceRelationId);
-	char sourceReplicationModel = sourceTableEntry->replicationModel;
-	ReleaseTableCacheEntry(sourceTableEntry);
+	CitusTableCacheEntryRef *sourceTableRef = GetCitusTableCacheEntry(sourceRelationId);
+	char sourceReplicationModel = sourceTableRef->cacheEntry->replicationModel;
+	ReleaseTableCacheEntry(sourceTableRef);
 
-	CitusTableCacheEntry *targetTableEntry = GetCitusTableCacheEntry(targetRelationId);
-	char targetReplicationModel = targetTableEntry->replicationModel;
-	ReleaseTableCacheEntry(targetTableEntry);
+	CitusTableCacheEntryRef *targetTableRef = GetCitusTableCacheEntry(targetRelationId);
+	char targetReplicationModel = targetTableRef->cacheEntry->replicationModel;
+	ReleaseTableCacheEntry(targetTableRef);
 
 	if (sourceReplicationModel != targetReplicationModel)
 	{
@@ -775,10 +775,10 @@ UpdateRelationColocationGroup(Oid distributedRelationId, uint32 colocationId)
 uint32
 TableColocationId(Oid distributedTableId)
 {
-	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(distributedTableId);
+	CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(distributedTableId);
 
-	uint32 colocationId = cacheEntry->colocationId;
-	ReleaseTableCacheEntry(cacheEntry);
+	uint32 colocationId = cacheRef->cacheEntry->colocationId;
+	ReleaseTableCacheEntry(cacheRef);
 	return colocationId;
 }
 
@@ -923,11 +923,11 @@ ColocatedShardIntervalList(ShardInterval *shardInterval)
 	Oid distributedTableId = shardInterval->relationId;
 	List *colocatedShardList = NIL;
 
-	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(distributedTableId);
-	char partitionMethod = cacheEntry->partitionMethod;
+	CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(distributedTableId);
+	char partitionMethod = cacheRef->cacheEntry->partitionMethod;
 	int shardIntervalArrayLength PG_USED_FOR_ASSERTS_ONLY =
-		cacheEntry->shardIntervalArrayLength;
-	ReleaseTableCacheEntry(cacheEntry);
+		cacheRef->cacheEntry->shardIntervalArrayLength;
+	ReleaseTableCacheEntry(cacheRef);
 
 	/*
 	 * If distribution type of the table is not hash or reference, each shard of
@@ -953,7 +953,7 @@ ColocatedShardIntervalList(ShardInterval *shardInterval)
 	Oid colocatedTableId = InvalidOid;
 	foreach_oid(colocatedTableId, colocatedTableList)
 	{
-		CitusTableCacheEntry *colocatedTableCacheEntry =
+		CitusTableCacheEntryRef *colocatedTableRef =
 			GetCitusTableCacheEntry(colocatedTableId);
 
 		/*
@@ -961,15 +961,15 @@ ColocatedShardIntervalList(ShardInterval *shardInterval)
 		 * same and greater than shardIntervalIndex.
 		 */
 		Assert(shardIntervalArrayLength ==
-			   colocatedTableCacheEntry->shardIntervalArrayLength);
+			   colocatedTableRef->cacheEntry->shardIntervalArrayLength);
 
 		ShardInterval *colocatedShardInterval =
-			colocatedTableCacheEntry->sortedShardIntervalArray[shardIntervalIndex];
+			colocatedTableRef->cacheEntry->sortedShardIntervalArray[shardIntervalIndex];
 
 		ShardInterval *copyShardInterval = CitusMakeNode(ShardInterval);
 		CopyShardInterval(colocatedShardInterval, copyShardInterval);
 
-		ReleaseTableCacheEntry(colocatedTableCacheEntry);
+		ReleaseTableCacheEntry(colocatedTableRef);
 
 		colocatedShardList = lappend(colocatedShardList, copyShardInterval);
 	}
@@ -1058,10 +1058,10 @@ ColocatedTableId(Oid colocationId)
 uint64
 ColocatedShardIdInRelation(Oid relationId, int shardIndex)
 {
-	CitusTableCacheEntry *tableCacheEntry = GetCitusTableCacheEntry(relationId);
+	CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(relationId);
 
-	uint64 shardId = tableCacheEntry->sortedShardIntervalArray[shardIndex]->shardId;
-	ReleaseTableCacheEntry(tableCacheEntry);
+	uint64 shardId = cacheRef->cacheEntry->sortedShardIntervalArray[shardIndex]->shardId;
+	ReleaseTableCacheEntry(cacheRef);
 	return shardId;
 }
 

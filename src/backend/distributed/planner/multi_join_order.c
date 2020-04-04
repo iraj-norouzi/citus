@@ -1383,17 +1383,17 @@ PartitionColumn(Oid relationId, uint32 rangeTableId)
 Var *
 DistPartitionKey(Oid relationId)
 {
-	CitusTableCacheEntry *partitionEntry = GetCitusTableCacheEntry(relationId);
+	CitusTableCacheEntryRef *partitionRef = GetCitusTableCacheEntry(relationId);
 
 	/* reference tables do not have partition column */
-	if (partitionEntry->partitionMethod == DISTRIBUTE_BY_NONE)
+	if (partitionRef->cacheEntry->partitionMethod == DISTRIBUTE_BY_NONE)
 	{
-		ReleaseTableCacheEntry(partitionEntry);
+		ReleaseTableCacheEntry(partitionRef);
 		return NULL;
 	}
 
-	Var *partitionColumn = copyObject(partitionEntry->partitionColumn);
-	ReleaseTableCacheEntry(partitionEntry);
+	Var *partitionColumn = copyObject(partitionRef->cacheEntry->partitionColumn);
+	ReleaseTableCacheEntry(partitionRef);
 	return partitionColumn;
 }
 
@@ -1423,10 +1423,10 @@ char
 PartitionMethod(Oid relationId)
 {
 	/* errors out if not a distributed table */
-	CitusTableCacheEntry *partitionEntry = GetCitusTableCacheEntry(relationId);
+	CitusTableCacheEntryRef *partitionRef = GetCitusTableCacheEntry(relationId);
 
-	char partitionMethod = partitionEntry->partitionMethod;
-	ReleaseTableCacheEntry(partitionEntry);
+	char partitionMethod = partitionRef->cacheEntry->partitionMethod;
+	ReleaseTableCacheEntry(partitionRef);
 	return partitionMethod;
 }
 
@@ -1436,9 +1436,9 @@ char
 TableReplicationModel(Oid relationId)
 {
 	/* errors out if not a distributed table */
-	CitusTableCacheEntry *partitionEntry = GetCitusTableCacheEntry(relationId);
+	CitusTableCacheEntryRef *partitionRef = GetCitusTableCacheEntry(relationId);
 
-	char replicationModel = partitionEntry->replicationModel;
-	ReleaseTableCacheEntry(partitionEntry);
+	char replicationModel = partitionRef->cacheEntry->replicationModel;
+	ReleaseTableCacheEntry(partitionRef);
 	return replicationModel;
 }

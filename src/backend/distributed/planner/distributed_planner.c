@@ -1930,12 +1930,12 @@ multi_relation_restriction_hook(PlannerInfo *root, RelOptInfo *relOptInfo,
 	 */
 	if (distributedTable)
 	{
-		CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(rte->relid);
+		CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(rte->relid);
 
 		relationRestrictionContext->allReferenceTables &=
-			(cacheEntry->partitionMethod == DISTRIBUTE_BY_NONE);
+			(cacheRef->cacheEntry->partitionMethod == DISTRIBUTE_BY_NONE);
 
-		ReleaseTableCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheRef);
 	}
 
 	relationRestrictionContext->relationRestrictionList =
@@ -2461,18 +2461,19 @@ IsLocalReferenceTableJoin(Query *parse, List *rangeTableList)
 			continue;
 		}
 
-		CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(
+		CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(
 			rangeTableEntry->relid);
-		if (cacheEntry->partitionMethod == DISTRIBUTE_BY_NONE)
+		char partitionMethod = cacheRef->cacheEntry->partitionMethod;
+		ReleaseTableCacheEntry(cacheRef);
+
+		if (partitionMethod == DISTRIBUTE_BY_NONE)
 		{
 			hasReferenceTable = true;
 		}
 		else
 		{
-			ReleaseTableCacheEntry(cacheEntry);
 			return false;
 		}
-		ReleaseTableCacheEntry(cacheEntry);
 	}
 
 	return hasLocalTable && hasReferenceTable;

@@ -46,12 +46,9 @@ typedef struct
 	/* lookup key - must be first. A pg_class.oid oid. */
 	Oid relationId;
 
-	/*
-	 * Has an invalidation been received for this entry, requiring a rebuild
-	 * of the cache entry?
-	 */
-	bool isValid;
-	bool isLive;
+	/* cache entries are reference counted */
+	MemoryContext memoryContext;
+	long refCount;
 
 	bool isCitusTable;
 	bool hasUninitializedShardInterval;
@@ -98,6 +95,12 @@ typedef struct
 	int *arrayOfPlacementArrayLengths;
 } CitusTableCacheEntry;
 
+typedef struct CitusTableCacheEntryRef
+{
+	MemoryContextCallback refcallback;
+	CitusTableCacheEntry *cacheEntry;
+} CitusTableCacheEntryRef;
+
 typedef struct DistObjectCacheEntryKey
 {
 	Oid classid;
@@ -110,8 +113,14 @@ typedef struct DistObjectCacheEntry
 	/* lookup key - must be first. */
 	DistObjectCacheEntryKey key;
 
+	/*
+	 * DistObjectCacheEntry doesn't have out of band data,
+	 * so for now we can store reference count in the hash entry.
+	 * When refCount is 0, invalidated slots can be removed.
+	 */
+	int refCount;
+
 	bool isValid;
-	bool isLive;
 	bool isDistributed;
 
 	int distributionArgIndex;
@@ -127,7 +136,7 @@ extern bool ReferenceTableShardId(uint64 shardId);
 extern ShardPlacement * FindShardPlacementOnGroup(int32 groupId, uint64 shardId);
 extern GroupShardPlacement * LoadGroupShardPlacement(uint64 shardId, uint64 placementId);
 extern ShardPlacement * LoadShardPlacement(uint64 shardId, uint64 placementId);
-extern CitusTableCacheEntry * GetCitusTableCacheEntry(Oid distributedRelationId);
+extern CitusTableCacheEntryRef * GetCitusTableCacheEntry(Oid distributedRelationId);
 extern DistObjectCacheEntry * LookupDistObjectCacheEntry(Oid classid, Oid objid, int32
 														 objsubid);
 extern int32 GetLocalGroupId(void);
@@ -158,7 +167,7 @@ extern void ErrorIfInconsistentShardIntervals(CitusTableCacheEntry *cacheEntry);
 extern void EnsureModificationsCanRun(void);
 extern char LookupDistributionMethod(Oid distributionMethodOid);
 extern void ReleaseObjectCacheEntry(DistObjectCacheEntry *cacheEntry);
-extern void ReleaseTableCacheEntry(CitusTableCacheEntry *cacheEntry);
+extern void ReleaseTableCacheEntry(CitusTableCacheEntryRef *cacheEntry);
 
 /* access WorkerNodeHash */
 extern HTAB * GetWorkerNodeHash(void);

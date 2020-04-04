@@ -244,9 +244,9 @@ SortedShardIntervalArray(Oid distributedTableId)
 {
 	Oid shardIdTypeId = INT8OID;
 
-	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(distributedTableId);
-	ShardInterval **shardIntervalArray = cacheEntry->sortedShardIntervalArray;
-	int shardIdCount = cacheEntry->shardIntervalArrayLength;
+	CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(distributedTableId);
+	ShardInterval **shardIntervalArray = cacheRef->cacheEntry->sortedShardIntervalArray;
+	int shardIdCount = cacheRef->cacheEntry->shardIntervalArrayLength;
 	Datum *shardIdDatumArray = palloc0(shardIdCount * sizeof(Datum));
 
 	for (int shardIndex = 0; shardIndex < shardIdCount; ++shardIndex)
@@ -257,7 +257,7 @@ SortedShardIntervalArray(Oid distributedTableId)
 		shardIdDatumArray[shardIndex] = shardIdDatum;
 	}
 
-	ReleaseTableCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheRef);
 
 	ArrayType *shardIdArrayType = DatumArrayToArrayType(shardIdDatumArray, shardIdCount,
 														shardIdTypeId);

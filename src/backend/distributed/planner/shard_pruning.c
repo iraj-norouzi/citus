@@ -314,9 +314,9 @@ List *
 PruneShards(Oid relationId, Index rangeTableId, List *whereClauseList,
 			Const **partitionValueConst)
 {
-	CitusTableCacheEntry *cacheEntry = GetCitusTableCacheEntry(relationId);
-	int shardCount = cacheEntry->shardIntervalArrayLength;
-	char partitionMethod = cacheEntry->partitionMethod;
+	CitusTableCacheEntryRef *cacheRef = GetCitusTableCacheEntry(relationId);
+	int shardCount = cacheRef->cacheEntry->shardIntervalArrayLength;
+	char partitionMethod = cacheRef->cacheEntry->partitionMethod;
 	ClauseWalkerContext context = { 0 };
 	ListCell *pruneCell;
 	List *prunedList = NIL;
@@ -327,25 +327,25 @@ PruneShards(Oid relationId, Index rangeTableId, List *whereClauseList,
 	/* there are no shards to return */
 	if (shardCount == 0)
 	{
-		ReleaseTableCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheRef);
 		return NIL;
 	}
 
 	/* always return empty result if WHERE clause is of the form: false (AND ..) */
 	if (ContainsFalseClause(whereClauseList))
 	{
-		ReleaseTableCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheRef);
 		return NIL;
 	}
 
 	/* short circuit for reference tables */
 	if (partitionMethod == DISTRIBUTE_BY_NONE)
 	{
-		prunedList = ShardArrayToList(cacheEntry->sortedShardIntervalArray,
-									  cacheEntry->shardIntervalArrayLength);
+		prunedList = ShardArrayToList(cacheRef->cacheEntry->sortedShardIntervalArray,
+									  cacheRef->cacheEntry->shardIntervalArrayLength);
 		prunedList = DeepCopyShardIntervalList(prunedList);
 
-		ReleaseTableCacheEntry(cacheEntry);
+		ReleaseTableCacheEntry(cacheRef);
 		return prunedList;
 	}
 
@@ -354,13 +354,14 @@ PruneShards(Oid relationId, Index rangeTableId, List *whereClauseList,
 	context.partitionColumn = PartitionColumn(relationId, rangeTableId);
 	context.currentPruningInstance = palloc0(sizeof(PruningInstance));
 
-	if (cacheEntry->shardIntervalCompareFunction)
+	if (cacheRef->cacheEntry->shardIntervalCompareFunction)
 	{
 		/* initiate function call info once (allows comparators to cache metadata) */
 		InitFunctionCallInfoData(*(FunctionCallInfo) &
 								 context.compareIntervalFunctionCall,
-								 cacheEntry->shardIntervalCompareFunction,
-								 2, cacheEntry->partitionColumn->varcollid, NULL, NULL);
+								 cacheRef->cacheEntry->shardIntervalCompareFunction,
+								 2, cacheRef->cacheEntry->partitionColumn->varcollid,
+								 NULL, NULL);
 	}
 	else
 	{
@@ -368,13 +369,14 @@ PruneShards(Oid relationId, Index rangeTableId, List *whereClauseList,
 							   "a shard interval comparator")));
 	}
 
-	if (cacheEntry->shardColumnCompareFunction)
+	if (cacheRef->cacheEntry->shardColumnCompareFunction)
 	{
 		/* initiate function call info once (allows comparators to cache metadata) */
 		InitFunctionCallInfoData(*(FunctionCallInfo) &
 								 context.compareValueFunctionCall,
-								 cacheEntry->shardColumnCompareFunction,
-								 2, cacheEntry->partitionColumn->varcollid, NULL, NULL);
+								 cacheRef->cacheEntry->shardColumnCompareFunction,
+								 2, cacheRef->cacheEntry->partitionColumn->varcollid,
+								 NULL, NULL);
 	}
 	else
 	{
@@ -455,7 +457,7 @@ PruneShards(Oid relationId, Index rangeTableId, List *whereClauseList,
 			}
 		}
 
-		List *pruneOneList = PruneOne(cacheEntry, &context, prune);
+		List *pruneOneList = PruneOne(cacheRef->cacheEntry, &context, prune);
 
 		if (prunedList)
 		{
@@ -483,8 +485,8 @@ PruneShards(Oid relationId, Index rangeTableId, List *whereClauseList,
 	/* found no valid restriction, build list of all shards */
 	if (!foundRestriction)
 	{
-		prunedList = ShardArrayToList(cacheEntry->sortedShardIntervalArray,
-									  cacheEntry->shardIntervalArrayLength);
+		prunedList = ShardArrayToList(cacheRef->cacheEntry->sortedShardIntervalArray,
+									  cacheRef->cacheEntry->shardIntervalArrayLength);
 	}
 
 	if (IsLoggableLevel(DEBUG3))
@@ -524,7 +526,7 @@ PruneShards(Oid relationId, Index rangeTableId, List *whereClauseList,
 	 * contents.
 	 */
 	prunedList = DeepCopyShardIntervalList(prunedList);
-	ReleaseTableCacheEntry(cacheEntry);
+	ReleaseTableCacheEntry(cacheRef);
 	return prunedList;
 }
 
