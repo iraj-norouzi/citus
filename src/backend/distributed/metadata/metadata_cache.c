@@ -995,7 +995,7 @@ static CitusTableCacheEntry *
 InitCitusTableCacheEntry(Oid relationId)
 {
 	CitusTableCacheEntry *cacheEntry =
-		MemoryContextAllocZero(MetadataCacheMemoryContext, sizeof(CitusTableCacheEntry));
+		MemoryContextAllocZero(TopMemoryContext, sizeof(CitusTableCacheEntry));
 	cacheEntry->relationId = relationId;
 
 	MemoryContext oldContext = NULL;
@@ -1026,7 +1026,7 @@ InitCitusTableCacheEntry(Oid relationId)
 	/* note that for reference tables partitionKeyisNull is true */
 	if (!partitionKeyIsNull)
 	{
-		oldContext = MemoryContextSwitchTo(MetadataCacheMemoryContext);
+		oldContext = MemoryContextSwitchTo(TopMemoryContext);
 
 		/* get the string representation of the partition column Var */
 		cacheEntry->partitionKeyString = TextDatumGetCString(partitionKeyDatum);
@@ -1076,11 +1076,11 @@ InitCitusTableCacheEntry(Oid relationId)
 		TypeCacheEntry *typeEntry = lookup_type_cache(partitionColumn->vartype,
 													  TYPECACHE_HASH_PROC_FINFO);
 
-		FmgrInfo *hashFunction = MemoryContextAllocZero(MetadataCacheMemoryContext,
+		FmgrInfo *hashFunction = MemoryContextAllocZero(TopMemoryContext,
 														sizeof(FmgrInfo));
 
 		fmgr_info_copy(hashFunction, &(typeEntry->hash_proc_finfo),
-					   MetadataCacheMemoryContext);
+					   TopMemoryContext);
 
 		cacheEntry->hashFunction = hashFunction;
 
@@ -1094,7 +1094,7 @@ InitCitusTableCacheEntry(Oid relationId)
 		cacheEntry->hashFunction = NULL;
 	}
 
-	oldContext = MemoryContextSwitchTo(MetadataCacheMemoryContext);
+	oldContext = MemoryContextSwitchTo(TopMemoryContext);
 
 	cacheEntry->referencedRelationsViaForeignKey = ReferencedRelationIdList(
 		cacheEntry->relationId);
@@ -1140,16 +1140,16 @@ BuildCachedShardList(CitusTableCacheEntry *cacheEntry)
 		TupleDesc distShardTupleDesc = RelationGetDescr(distShardRelation);
 		int arrayIndex = 0;
 
-		shardIntervalArray = MemoryContextAllocZero(MetadataCacheMemoryContext,
+		shardIntervalArray = MemoryContextAllocZero(TopMemoryContext,
 													shardIntervalArrayLength *
 													sizeof(ShardInterval *));
 
 		cacheEntry->arrayOfPlacementArrays =
-			MemoryContextAllocZero(MetadataCacheMemoryContext,
+			MemoryContextAllocZero(TopMemoryContext,
 								   shardIntervalArrayLength *
 								   sizeof(GroupShardPlacement *));
 		cacheEntry->arrayOfPlacementArrayLengths =
-			MemoryContextAllocZero(MetadataCacheMemoryContext,
+			MemoryContextAllocZero(TopMemoryContext,
 								   shardIntervalArrayLength *
 								   sizeof(int));
 
@@ -1160,7 +1160,7 @@ BuildCachedShardList(CitusTableCacheEntry *cacheEntry)
 																distShardTupleDesc,
 																intervalTypeId,
 																intervalTypeMod);
-			MemoryContext oldContext = MemoryContextSwitchTo(MetadataCacheMemoryContext);
+			MemoryContext oldContext = MemoryContextSwitchTo(TopMemoryContext);
 
 			ShardInterval *newShardInterval = (ShardInterval *) palloc0(
 				sizeof(ShardInterval));
@@ -1181,7 +1181,7 @@ BuildCachedShardList(CitusTableCacheEntry *cacheEntry)
 	if (columnTypeId != InvalidOid)
 	{
 		/* allocate the comparison function in the cache context */
-		MemoryContext oldContext = MemoryContextSwitchTo(MetadataCacheMemoryContext);
+		MemoryContext oldContext = MemoryContextSwitchTo(TopMemoryContext);
 
 		shardColumnCompareFunction = GetFunctionInfo(columnTypeId, BTREE_AM_OID,
 													 BTORDER_PROC);
@@ -1196,7 +1196,7 @@ BuildCachedShardList(CitusTableCacheEntry *cacheEntry)
 	if (intervalTypeId != InvalidOid)
 	{
 		/* allocate the comparison function in the cache context */
-		MemoryContext oldContext = MemoryContextSwitchTo(MetadataCacheMemoryContext);
+		MemoryContext oldContext = MemoryContextSwitchTo(TopMemoryContext);
 
 		shardIntervalCompareFunction = GetFunctionInfo(intervalTypeId, BTREE_AM_OID,
 													   BTORDER_PROC);
@@ -1280,7 +1280,7 @@ BuildCachedShardList(CitusTableCacheEntry *cacheEntry)
 		int numberOfPlacements = list_length(placementList);
 
 		/* and copy that list into the cache entry */
-		MemoryContext oldContext = MemoryContextSwitchTo(MetadataCacheMemoryContext);
+		MemoryContext oldContext = MemoryContextSwitchTo(TopMemoryContext);
 		GroupShardPlacement *placementArray = palloc0(numberOfPlacements *
 													  sizeof(GroupShardPlacement));
 		GroupShardPlacement *srcPlacement = NULL;
